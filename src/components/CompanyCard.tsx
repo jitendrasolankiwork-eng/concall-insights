@@ -1,51 +1,7 @@
 import { CompanyInsight } from "@/types/portfolio";
 import { Link } from "react-router-dom";
 
-function ScoreBadge({ score }: { score: number }) {
-  const color =
-    score >= 4
-      ? "text-signal-green bg-signal-green-bg"
-      : score >= 3
-      ? "text-signal-amber bg-signal-amber-bg"
-      : "text-signal-red bg-signal-red-bg";
-  return (
-    <span className={`text-lg font-bold px-2 py-0.5 rounded-md ${color}`}>
-      {score.toFixed(1)}
-      <span className="text-xs font-normal opacity-70"> / 5</span>
-    </span>
-  );
-}
-
-function VerdictPill({ verdict }: { verdict: CompanyInsight["verdict"] }) {
-  const color =
-    verdict.key === "buy"
-      ? "bg-signal-green-bg text-signal-green"
-      : verdict.key === "hold"
-      ? "bg-signal-amber-bg text-signal-amber"
-      : "bg-signal-red-bg text-signal-red";
-  return (
-    <span className={`text-2xs font-semibold uppercase px-2 py-0.5 rounded-full ${color}`}>
-      {verdict.label}
-    </span>
-  );
-}
-
-function SignalMini({ label, score }: { label: string; score: number }) {
-  const dotColor =
-    score >= 4
-      ? "bg-signal-green"
-      : score >= 3
-      ? "bg-signal-amber"
-      : "bg-signal-red";
-  return (
-    <div className="flex items-center gap-1.5 text-xs text-text-secondary">
-      <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
-      <span>{label}</span>
-      <span className="font-semibold text-text-primary">{score}/5</span>
-    </div>
-  );
-}
-
+// ── Logo ──────────────────────────────────────────────────────────────────
 function CompanyLogo({ slug, company }: { slug: string; company: string }) {
   return (
     <div className="w-10 h-10 rounded-full overflow-hidden bg-muted flex items-center justify-center flex-shrink-0">
@@ -54,14 +10,14 @@ function CompanyLogo({ slug, company }: { slug: string; company: string }) {
         alt={company}
         className="w-full h-full object-cover"
         onError={(e) => {
-          const target = e.target as HTMLImageElement;
-          target.style.display = "none";
-          const parent = target.parentElement;
-          if (parent) {
-            const fallback = document.createElement("span");
-            fallback.className = "text-sm font-bold text-text-muted";
-            fallback.textContent = company.charAt(0);
-            parent.appendChild(fallback);
+          const t = e.target as HTMLImageElement;
+          t.style.display = "none";
+          const p = t.parentElement;
+          if (p) {
+            const fb = document.createElement("span");
+            fb.className = "text-sm font-bold text-text-muted";
+            fb.textContent = company.charAt(0);
+            p.appendChild(fb);
           }
         }}
       />
@@ -69,81 +25,153 @@ function CompanyLogo({ slug, company }: { slug: string; company: string }) {
   );
 }
 
-function PriceDisplay({ price, change }: { price: number; change: number }) {
-  const isPositive = change >= 0;
-  const color = isPositive ? "text-signal-green" : "text-signal-red";
+// ── Score delta ───────────────────────────────────────────────────────────
+function ScoreDelta({ current, previous }: { current: number; previous?: number }) {
+  if (!previous || Math.abs(current - previous) < 0.05) return null;
+  const positive = current > previous;
   return (
-    <span className={`text-xs font-medium ${color}`}>
-      ₹{price.toLocaleString("en-IN")} {isPositive ? "▲" : "▼"} {Math.abs(change)}%
+    <span className={`text-2xs font-semibold px-1.5 py-0.5 rounded-full ${
+      positive ? "bg-signal-green-bg text-signal-green" : "bg-signal-red-bg text-signal-red"
+    }`}>
+      {positive ? "▲" : "▼"} {Math.abs(current - previous).toFixed(1)}
     </span>
   );
 }
 
-function ToneDot({ tone }: { tone: string }) {
-  const config: Record<string, { color: string; label: string }> = {
-    confident: { color: "bg-signal-green", label: "Confident" },
-    cautious: { color: "bg-signal-amber", label: "Cautious" },
-    defensive: { color: "bg-signal-red", label: "Defensive" },
-  };
-  const c = config[tone] || config.cautious;
-  return (
-    <span className="flex items-center gap-1.5 text-xs text-text-secondary">
-      <span className={`w-2 h-2 rounded-full ${c.color}`} />
-      {c.label}
+// ── Attention tag — computed from data, never crashes ─────────────────────
+function AttentionTag({ company }: { company: CompanyInsight }) {
+  // 🆕 NEW — processed within 7 days
+  const isNew = (() => {
+    try {
+      const days = (Date.now() - new Date(company.processedAt).getTime()) / 86400000;
+      return days <= 7;
+    } catch { return false; }
+  })();
+
+  // 🔻 DECLINING — score dropped vs previous
+  const isDeclining = !!(
+    company.previousCompositeScore &&
+    company.compositeScore < company.previousCompositeScore - 0.3
+  );
+
+  // ⚠ NEEDS ATTENTION — hold/weak verdict OR any parameter score ≤ 2
+  const needsAttention =
+    company.verdict.key !== "buy" ||
+    company.parameters.capex.score <= 2 ||
+    company.parameters.revenueGrowth.score <= 2 ||
+    company.parameters.marginOutlook.score <= 2;
+
+  if (isDeclining) return (
+    <span className="text-2xs font-bold px-1.5 py-0.5 rounded-full bg-signal-red-bg text-signal-red">
+      🔻 Declining
     </span>
   );
+  if (isNew) return (
+    <span className="text-2xs font-bold px-1.5 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue">
+      🆕 New update
+    </span>
+  );
+  if (needsAttention) return (
+    <span className="text-2xs font-bold px-1.5 py-0.5 rounded-full bg-signal-amber-bg text-signal-amber">
+      ⚠ Watch
+    </span>
+  );
+  return null;
 }
 
+// ── Main card ─────────────────────────────────────────────────────────────
 export default function CompanyCard({ company }: { company: CompanyInsight }) {
-  const whyItems: string[] = [];
-  if (company.parameters.revenueGrowth.score >= 4) whyItems.push("Strong revenue growth");
-  if (company.parameters.marginOutlook.score >= 4) whyItems.push("expanding margins");
-  else if (company.parameters.marginOutlook.score <= 2) whyItems.push("margin pressure");
-  if (company.parameters.capex.score >= 4) whyItems.push("aggressive capex");
-  else if (company.parameters.capex.score <= 2) whyItems.push("limited capex");
+  const vc = company.verdict.key === "buy"
+    ? { text: "text-signal-green", bg: "bg-signal-green-bg" }
+    : company.verdict.key === "hold"
+    ? { text: "text-signal-amber", bg: "bg-signal-amber-bg" }
+    : { text: "text-signal-red",   bg: "bg-signal-red-bg"   };
+
+  const dotColor = company.managementTone === "confident" ? "bg-signal-green"
+    : company.managementTone === "cautious"  ? "bg-signal-amber" : "bg-signal-red";
+
+  const toneLabel = company.managementTone
+    ? company.managementTone.charAt(0).toUpperCase() + company.managementTone.slice(1)
+    : "";
+
+  // 1-line insight — first sentence of investorTake, capped at 72 chars
+  const insight = (() => {
+    if (!company.investorTake) return null;
+    const first = company.investorTake.split(".")[0].trim();
+    return first.length > 10 ? first.slice(0, 72) + (first.length > 72 ? "…" : "") : null;
+  })();
 
   return (
     <Link to={`/company/${company.ticker}`} className="block card-hover p-4 space-y-3">
-      {/* Header */}
+
+      {/* Row 1: Logo + name + attention tag + score */}
       <div className="flex items-start gap-3">
         <CompanyLogo slug={company.slug} company={company.company} />
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-text-primary truncate">{company.company}</h3>
-          <p className="text-xs text-text-muted">
-            {company.ticker} · {company.quarter}
-          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-sm font-semibold text-text-primary truncate">{company.company}</h3>
+            <AttentionTag company={company} />
+          </div>
+          <p className="text-xs text-text-muted">{company.ticker} · {company.quarter}</p>
         </div>
-        <ScoreBadge score={company.compositeScore} />
+        {/* Score + delta stacked */}
+        <div className="flex flex-col items-end gap-1 shrink-0">
+          <span className={`text-lg font-bold ${vc.text}`}>
+            {company.compositeScore.toFixed(1)}
+            <span className="text-xs font-normal text-text-muted"> /5</span>
+          </span>
+          <ScoreDelta current={company.compositeScore} previous={company.previousCompositeScore} />
+        </div>
       </div>
 
-      {/* Price + Verdict + Thesis */}
+      {/* Row 2: Price + verdict + thesis */}
       <div className="flex items-center gap-2 flex-wrap">
-        <PriceDisplay price={company.price} change={company.priceChange} />
-        <VerdictPill verdict={company.verdict} />
+        {company.price > 0 && (
+          <span className={`text-xs font-medium ${
+            company.priceChange >= 0 ? "text-signal-green" : "text-signal-red"
+          }`}>
+            ₹{company.price.toLocaleString("en-IN")} {company.priceChange >= 0 ? "▲" : "▼"} {Math.abs(company.priceChange).toFixed(2)}%
+          </span>
+        )}
+        <span className={`text-2xs font-semibold uppercase px-2 py-0.5 rounded-full ${vc.bg} ${vc.text}`}>
+          {company.verdict.label}
+        </span>
         <span className="text-2xs font-medium px-2 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue">
           Thesis {company.thesisPassed}/{company.thesisTotal}
         </span>
       </div>
 
-      {/* Signal mini-cards */}
+      {/* Row 3: Signal dots */}
       <div className="flex gap-4">
-        <SignalMini label="Capex" score={company.parameters.capex.score} />
-        <SignalMini label="Growth" score={company.parameters.revenueGrowth.score} />
-        <SignalMini label="Margins" score={company.parameters.marginOutlook.score} />
+        {[
+          { label: "Capex",   score: company.parameters.capex.score          },
+          { label: "Growth",  score: company.parameters.revenueGrowth.score  },
+          { label: "Margins", score: company.parameters.marginOutlook.score  },
+        ].map(({ label, score }) => (
+          <div key={label} className="flex items-center gap-1.5 text-xs text-text-secondary">
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              score >= 4 ? "bg-signal-green" : score >= 3 ? "bg-signal-amber" : "bg-signal-red"
+            }`} />
+            <span>{label}</span>
+            <span className="font-semibold text-text-primary">{score}/5</span>
+          </div>
+        ))}
       </div>
 
-      {/* Why line */}
-      {whyItems.length > 0 && (
-        <p className="text-xs text-text-secondary">
-          ✔ {whyItems.join(" · ")}
-        </p>
+      {/* Row 4: 1-line insight */}
+      {insight && (
+        <p className="text-xs text-text-secondary leading-snug">{insight}</p>
       )}
 
-      {/* Footer */}
+      {/* Row 5: Tone + updated */}
       <div className="flex items-center justify-between">
-        <ToneDot tone={company.managementTone} />
+        <span className="flex items-center gap-1.5 text-xs text-text-secondary">
+          <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+          {toneLabel}
+        </span>
         <span className="text-2xs text-text-muted">Updated {company.processedAt}</span>
       </div>
+
     </Link>
   );
 }

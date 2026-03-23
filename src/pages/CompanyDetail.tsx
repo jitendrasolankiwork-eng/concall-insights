@@ -1,49 +1,81 @@
 import { useParams, Link } from "react-router-dom";
-import { useState } from "react";
-import { mockCompanies } from "@/data/mockData";
+import { useState, useEffect } from "react";
+import { fetchCompany, fetchCompanyByQuarter, fetchAvailableQuarters } from "@/lib/api";
 import { CompanyInsight, Parameter } from "@/types/portfolio";
 
+// ── Color helpers ──────────────────────────────────────────────────────────────
 function ScoreColor(score: number) {
   if (score >= 4) return { text: "text-signal-green", bg: "bg-signal-green-bg", border: "border-signal-green" };
   if (score >= 3) return { text: "text-signal-amber", bg: "bg-signal-amber-bg", border: "border-signal-amber" };
   return { text: "text-signal-red", bg: "bg-signal-red-bg", border: "border-signal-red" };
 }
-
 function VerdictColor(key: string) {
-  if (key === "buy") return { text: "text-signal-green", bg: "bg-signal-green-bg" };
+  if (key === "buy")  return { text: "text-signal-green", bg: "bg-signal-green-bg" };
   if (key === "hold") return { text: "text-signal-amber", bg: "bg-signal-amber-bg" };
   return { text: "text-signal-red", bg: "bg-signal-red-bg" };
 }
-
 function ToneColor(tone: string) {
-  if (tone === "confident") return { text: "text-signal-green", bg: "bg-signal-green-bg" };
-  if (tone === "cautious") return { text: "text-signal-amber", bg: "bg-signal-amber-bg" };
-  return { text: "text-signal-red", bg: "bg-signal-red-bg" };
+  if (tone === "confident") return { text: "text-signal-green", bg: "bg-signal-green-bg", dot: "bg-signal-green" };
+  if (tone === "cautious")  return { text: "text-signal-amber", bg: "bg-signal-amber-bg", dot: "bg-signal-amber" };
+  return { text: "text-signal-red", bg: "bg-signal-red-bg", dot: "bg-signal-red" };
 }
-
-function ThesisRowColor(answer: string) {
-  if (answer === "yes") return "bg-signal-green-bg";
+function ThesisRowBg(answer: string) {
+  if (answer === "yes")     return "bg-signal-green-bg";
   if (answer === "partial") return "bg-signal-amber-bg";
-  if (answer === "no") return "bg-signal-red-bg";
-  return "bg-signal-neutral-bg";
+  if (answer === "no")      return "bg-signal-red-bg";
+  return "bg-muted/40";
+}
+function ThesisIcon({ answer }: { answer: string }) {
+  if (answer === "yes")     return <span className="text-signal-green font-bold text-sm">✓</span>;
+  if (answer === "partial") return <span className="text-signal-amber font-bold text-sm">~</span>;
+  if (answer === "no")      return <span className="text-signal-red font-bold text-sm">✕</span>;
+  return <span className="text-text-muted font-bold text-sm">?</span>;
 }
 
-function ThesisIcon(answer: string) {
-  if (answer === "yes") return <span className="text-signal-green font-bold">✓</span>;
-  if (answer === "partial") return <span className="text-signal-amber font-bold">~</span>;
-  if (answer === "no") return <span className="text-signal-red font-bold">✕</span>;
-  return <span className="text-signal-neutral font-bold">?</span>;
+// ── Red flag detector ────────────────────────────────────────────────────────
+function detectRedFlags(company: CompanyInsight): string[] {
+  const flags: string[] = [];
+  const p    = company.parameters;
+  const prev = company.previousCompositeScore;
+
+  // Score drop > 0.5
+  if (prev && company.compositeScore < prev - 0.5)
+    flags.push(`Overall score dropped ${prev.toFixed(1)} → ${company.compositeScore.toFixed(1)}`);
+
+  // Margin decline
+  const m = p.marginOutlook;
+  if (m.previousScore !== undefined && m.previousScore > m.score)
+    flags.push(`Margin signal weakened (${m.previousScore} → ${m.score})`);
+
+  // Revenue guidance declined
+  const g = p.revenueGrowth;
+  if (g.previousScore !== undefined && g.previousScore > g.score)
+    flags.push(`Revenue growth signal declined (${g.previousScore} → ${g.score})`);
+
+  // Defensive management tone
+  if (company.managementTone === "defensive")
+    flags.push("Management tone turned defensive in Q&A");
+
+  // Weak signal despite high score (score ≥4 but tag has pressure)
+  const mTag = (m.tag || "").toLowerCase();
+  if (mTag.includes("pressure") || mTag.includes("risk"))
+    flags.push(`Margin outlook: ${m.tag}`);
+
+  return flags;
 }
 
+// ── Source badge ───────────────────────────────────────────────────────────────
 function SourceBadge({ source, link }: { source: string; link?: string }) {
-  const isPPT = source === "PPT" || source.includes("Presentation");
-  const cls = isPPT
+  const isPPT = source === "PPT" || source.toLowerCase().includes("presentation");
+  const cls   = isPPT
     ? "bg-signal-blue-bg text-signal-blue"
-    : "bg-signal-neutral-bg text-signal-neutral";
+    : "bg-muted text-text-secondary";
   const label = isPPT ? "PPT" : "Concall";
-  if (link && link !== "#") {
+  if (link && link !== "#" && link !== "") {
     return (
-      <a href={link} target="_blank" rel="noopener noreferrer" className={`text-2xs font-medium px-1.5 py-0.5 rounded ${cls} hover:opacity-70`}>
+      <a href={link} target="_blank" rel="noopener noreferrer"
+        className={`text-2xs font-medium px-1.5 py-0.5 rounded ${cls} hover:opacity-70 flex items-center gap-0.5`}
+        onClick={(e) => e.stopPropagation()}>
         {label} ↗
       </a>
     );
@@ -51,57 +83,72 @@ function SourceBadge({ source, link }: { source: string; link?: string }) {
   return <span className={`text-2xs font-medium px-1.5 py-0.5 rounded ${cls}`}>{label}</span>;
 }
 
-function ParameterCard({ label, icon, param }: { label: string; icon: string; param: Parameter }) {
+// ── Parameter card ─────────────────────────────────────────────────────────────
+function ParameterCard({ label, icon, param, prevQ, curQ }: {
+  label: string; icon: string; param: Parameter; prevQ?: string; curQ?: string;
+}) {
   const [expanded, setExpanded] = useState(false);
-  const sc = ScoreColor(param.score);
+  const sc      = ScoreColor(param.score);
   const changed = param.previousScore !== undefined && param.previousScore !== param.score;
+  const hasKpis = param.kpis && param.kpis.length > 0;
 
   return (
     <div className="card-base overflow-hidden">
-      <button onClick={() => setExpanded(!expanded)} className="w-full text-left p-4 hover:bg-muted/30 transition-colors">
-        <div className="flex items-center gap-3 flex-wrap">
+      <button onClick={() => setExpanded(!expanded)}
+        className="w-full text-left p-4 hover:bg-muted/30 transition-colors">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-base">{icon}</span>
           <span className="text-sm font-semibold text-text-primary">{label}</span>
           <span className={`text-xs font-bold px-2 py-0.5 rounded-md ${sc.bg} ${sc.text}`}>
             {param.score}/5
           </span>
           {changed && (
-            <span className={`text-2xs font-medium px-1.5 py-0.5 rounded ${param.previousScore! > param.score ? "bg-signal-red-bg text-signal-red" : "bg-signal-green-bg text-signal-green"}`}>
+            <span className={`text-2xs font-medium px-1.5 py-0.5 rounded ${
+              param.previousScore! > param.score
+                ? "bg-signal-red-bg text-signal-red"
+                : "bg-signal-green-bg text-signal-green"
+            }`}>
               {param.previousScore}→{param.score}
             </span>
           )}
           <span className={`text-2xs px-1.5 py-0.5 rounded ${sc.bg} ${sc.text}`}>{param.tag}</span>
         </div>
-        <p className="text-xs text-text-secondary mt-1.5 line-clamp-1">
-          {param.kpis[0] && `→ ${param.kpis[0].value}${param.kpis[0].context ? ` (${param.kpis[0].context})` : ""}`}
-        </p>
+        {hasKpis && (
+          <p className="text-xs text-text-secondary mt-1.5 line-clamp-1">
+            → {param.kpis[0].label}: {param.kpis[0].value}
+            {param.kpis[0].context ? ` (${param.kpis[0].context})` : ""}
+          </p>
+        )}
       </button>
 
       {expanded && (
         <div className="px-4 pb-4 space-y-4 border-t border-border pt-4">
-          {/* KPIs */}
-          <div>
-            <h4 className="text-xs font-semibold text-text-secondary mb-2">Key Metrics</h4>
-            <div className="space-y-1.5">
-              {param.kpis.map((kpi, i) => (
-                <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-border last:border-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-text-secondary">{kpi.label}</span>
-                    {kpi.context && <span className="text-text-muted">({kpi.context})</span>}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-semibold text-text-primary">{kpi.value}</span>
-                    <SourceBadge source={kpi.source} link={kpi.link} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
 
-          {/* Projects */}
+          {/* Key Metrics from PPT */}
+          {hasKpis && (
+            <div>
+              <h4 className="text-xs font-semibold text-text-secondary mb-2">Key metrics</h4>
+              <div className="space-y-1.5">
+                {param.kpis.map((kpi, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs py-1.5 border-b border-border last:border-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-text-secondary">{kpi.label}</span>
+                      {kpi.context && <span className="text-text-muted">({kpi.context})</span>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-semibold text-text-primary">{kpi.value}</span>
+                      <SourceBadge source={kpi.source} link={kpi.link} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Capital projects */}
           {param.projects && param.projects.length > 0 && (
             <div>
-              <h4 className="text-xs font-semibold text-text-secondary mb-2">Capital Projects</h4>
+              <h4 className="text-xs font-semibold text-text-secondary mb-2">Capital projects</h4>
               <div className="space-y-2">
                 {param.projects.map((proj, i) => (
                   <div key={i} className="bg-muted/50 rounded-lg p-3">
@@ -119,27 +166,46 @@ function ParameterCard({ label, icon, param }: { label: string; icon: string; pa
             </div>
           )}
 
+          {/* QoQ comparison */}
+          {param.previousScore !== undefined && prevQ && curQ && (
+            <div>
+              <h4 className="text-xs font-semibold text-text-secondary mb-2">
+                How score changed ({prevQ} → {curQ})
+              </h4>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="bg-muted/50 rounded-lg p-3">
+                  <p className="text-2xs text-text-muted mb-1">{prevQ}</p>
+                  <p className="text-xs font-semibold text-text-primary">{param.previousScore}/5</p>
+                </div>
+                <div className={`rounded-lg p-3 ${
+                  param.score > param.previousScore ? "bg-signal-green-bg" :
+                  param.score < param.previousScore ? "bg-signal-red-bg"   : "bg-muted/50"
+                }`}>
+                  <p className="text-2xs text-text-muted mb-1">{curQ}</p>
+                  <p className={`text-xs font-semibold ${ScoreColor(param.score).text}`}>
+                    {param.score}/5
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Reasoning */}
           <div>
-            <h4 className="text-xs font-semibold text-text-secondary mb-1">AI Reasoning</h4>
+            <h4 className="text-xs font-semibold text-text-secondary mb-1">AI reasoning</h4>
             <p className="text-xs text-text-secondary leading-relaxed">{param.reasoning}</p>
           </div>
 
-          {/* Quotes */}
+          {/* Key quotes */}
           {param.evidence.length > 0 && (
             <div>
-              <h4 className="text-xs font-semibold text-text-secondary mb-2">Key Quotes</h4>
+              <h4 className="text-xs font-semibold text-text-secondary mb-2">Key quotes</h4>
               <div className="space-y-2">
                 {param.evidence.map((ev, i) => (
                   <div key={i} className="bg-muted/50 rounded-lg p-3">
                     <p className="text-xs italic text-text-secondary leading-relaxed">"{ev.quote}"</p>
                     <div className="mt-1.5 flex items-center gap-2">
-                      <span className="text-2xs text-text-muted">{ev.source}</span>
-                      {ev.link && ev.link !== "#" && (
-                        <a href={ev.link} target="_blank" rel="noopener noreferrer" className="text-2xs text-signal-blue hover:underline">
-                          View source ↗
-                        </a>
-                      )}
+                      <SourceBadge source={ev.source} link={ev.link} />
                     </div>
                   </div>
                 ))}
@@ -152,21 +218,131 @@ function ParameterCard({ label, icon, param }: { label: string; icon: string; pa
   );
 }
 
+// ── Main page ──────────────────────────────────────────────────────────────────
+// ── How Scores Work Modal ─────────────────────────────────────────────────
+function HowScoresModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: "rgba(0,0,0,0.4)" }}
+      onClick={onClose}>
+      <div className="bg-card rounded-2xl p-6 max-w-sm w-full space-y-4 relative"
+        style={{ border: "0.5px solid hsl(var(--border))" }}
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-bold text-text-primary">How scores work</h2>
+          <button onClick={onClose} className="text-text-muted hover:text-text-primary text-lg leading-none">✕</button>
+        </div>
+        <p className="text-xs text-text-secondary leading-relaxed">
+          Each company is rated on 3 signals extracted from quarterly concalls and investor presentations.
+        </p>
+        <div className="space-y-2">
+          {[
+            { icon: "🏗️", label: "Capex & Expansion",  desc: "Investment in growth" },
+            { icon: "📈", label: "Revenue Growth",       desc: "Forward guidance visibility" },
+            { icon: "📊", label: "Margin Outlook",       desc: "Profitability direction" },
+          ].map((s) => (
+            <div key={s.label} className="flex items-center justify-between bg-muted/40 rounded-lg px-3 py-2">
+              <div className="flex items-center gap-2">
+                <span className="text-base">{s.icon}</span>
+                <div>
+                  <p className="text-xs font-semibold text-text-primary">{s.label}</p>
+                  <p className="text-2xs text-text-muted">{s.desc}</p>
+                </div>
+              </div>
+              <span className="text-xs text-text-muted font-medium">0 – 5</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-text-secondary">Overall score = average of all 3 signals</p>
+        <div className="border-t border-border" />
+        <div className="space-y-2">
+          {[
+            { emoji: "🟢", label: "BUY",  range: "4.0 and above", color: "text-signal-green" },
+            { emoji: "🟡", label: "HOLD", range: "3.0 – 3.9",     color: "text-signal-amber" },
+            { emoji: "🔴", label: "WEAK", range: "Below 3.0",      color: "text-signal-red"   },
+          ].map((v) => (
+            <div key={v.label} className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm">{v.emoji}</span>
+                <span className={`text-xs font-bold ${v.color}`}>{v.label}</span>
+              </div>
+              <span className="text-xs text-text-muted">{v.range}</span>
+            </div>
+          ))}
+        </div>
+        <div className="border-t border-border" />
+        <p className="text-xs text-text-secondary leading-relaxed">
+          Every score is backed by direct quotes from source documents.
+          Click any <span className="font-semibold text-signal-blue">PPT ↗</span> or{" "}
+          <span className="font-semibold text-text-secondary">Concall ↗</span> badge
+          to verify the original statement.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export default function CompanyDetail() {
   const { ticker } = useParams<{ ticker: string }>();
-  const company = mockCompanies.find((c) => c.ticker === ticker);
-  const [showEvidence, setShowEvidence] = useState(false);
+  const sym = ticker?.toUpperCase() || "";
 
-  if (!company) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center space-y-2">
-          <p className="text-text-primary font-semibold">Company not found</p>
-          <Link to="/" className="text-sm text-signal-blue hover:underline">← Back to dashboard</Link>
-        </div>
+  const [company,    setCompany]    = useState<CompanyInsight | null>(null);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState("");
+  const [quarters,   setQuarters]   = useState<string[]>([]);
+  const [activeQ,    setActiveQ]    = useState<string>("");
+  const [showEvidence, setShowEvidence] = useState(false);
+  const [showModal,    setShowModal]    = useState(false);
+
+  // Load latest on mount
+  useEffect(() => {
+    if (!sym) return;
+    Promise.all([
+      fetchCompany(sym),
+      fetchAvailableQuarters(sym),
+    ])
+      .then(([data, qtrs]) => {
+        setCompany(data);
+        setQuarters(qtrs);
+        setActiveQ(data.quarter);
+        setLoading(false);
+      })
+      .catch((e) => { setError(e.message); setLoading(false); });
+  }, [sym]);
+
+  // Switch quarter
+  const switchQuarter = async (q: string) => {
+    if (q === activeQ) return;
+    setLoading(true);
+    try {
+      const data = await fetchCompanyByQuarter(sym, q);
+      setCompany(data);
+      setActiveQ(q);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading) return (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="text-center space-y-2">
+        <div className="w-7 h-7 border-2 border-foreground border-t-transparent rounded-full animate-spin mx-auto" />
+        <p className="text-xs text-text-muted">Loading {sym}…</p>
       </div>
-    );
-  }
+    </div>
+  );
+
+  if (error || !company) return (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="text-center space-y-2">
+        <p className="text-text-primary font-semibold">{sym} not found</p>
+        <p className="text-xs text-text-muted">Process this company via the Google Sheet pipeline first</p>
+        <Link to="/" className="text-sm text-signal-blue hover:underline">← Back to dashboard</Link>
+      </div>
+    </div>
+  );
 
   const vc = VerdictColor(company.verdict.key);
   const tc = ToneColor(company.managementTone);
@@ -174,22 +350,12 @@ export default function CompanyDetail() {
     ? company.compositeScore - company.previousCompositeScore
     : 0;
 
-  const thesisEntries = [
-    { key: "q1", label: "Differentiated business model", data: company.thesis.q1_businessModel },
-    { key: "q2", label: "Favorable sector outlook", data: company.thesis.q2_sectorOutlook },
-    { key: "q3", label: "Growing market share", data: company.thesis.q3_marketShare },
-    { key: "q4", label: "Revenue growth visibility", data: company.thesis.q4_growthVisibility },
-    { key: "q5", label: "Structural capex commitment", data: company.thesis.q5_structuralCapex },
-    { key: "q6", label: "Operating leverage potential", data: company.thesis.q6_operatingLeverage },
-  ];
-
   const params = [
-    { key: "capex", label: "Capex & Expansion", icon: "🏗️", param: company.parameters.capex },
-    { key: "revenue", label: "Revenue Growth", icon: "📈", param: company.parameters.revenueGrowth },
-    { key: "margins", label: "Margin Outlook", icon: "📊", param: company.parameters.marginOutlook },
+    { key: "capex",   label: "Capex & Expansion", icon: "🏗️",  param: company.parameters.capex },
+    { key: "revenue", label: "Revenue Growth",    icon: "📈", param: company.parameters.revenueGrowth },
+    { key: "margins", label: "Margin Outlook",    icon: "📊", param: company.parameters.marginOutlook },
   ];
 
-  // Trends
   const changedParams = params.filter(
     (p) => p.param.previousScore !== undefined && p.param.previousScore !== p.param.score
   );
@@ -197,75 +363,196 @@ export default function CompanyDetail() {
     (p) => p.param.previousScore === undefined || p.param.previousScore === p.param.score
   );
 
+  const thesisEntries = [
+    { key: "q1", label: "Business model clear",       data: company.thesis.q1_businessModel },
+    { key: "q2", label: "Favorable sector outlook",   data: company.thesis.q2_sectorOutlook },
+    { key: "q3", label: "Growing market share",       data: company.thesis.q3_marketShare },
+    { key: "q4", label: "Revenue growth visibility",  data: company.thesis.q4_growthVisibility },
+    { key: "q5", label: "Structural capex commitment",data: company.thesis.q5_structuralCapex },
+    { key: "q6", label: "Operating leverage visible", data: company.thesis.q6_operatingLeverage },
+  ];
+
   const priceColor = company.priceChange >= 0 ? "text-signal-green" : "text-signal-red";
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Sticky Header */}
+
+      {/* Sticky header */}
       <header className="sticky top-0 z-10 bg-card border-b border-border">
         <div className="container py-3">
           <div className="flex items-center gap-3">
-            <Link to="/" className="text-text-muted hover:text-text-primary transition-colors text-sm">
-              ←
-            </Link>
+            <Link to="/" className="text-text-muted hover:text-text-primary transition-colors text-sm">←</Link>
             <div className="w-8 h-8 rounded-full overflow-hidden bg-muted flex items-center justify-center flex-shrink-0">
               <img
                 src={`https://s3-symbol-logo.tradingview.com/${company.slug}--big.svg`}
                 alt={company.company}
                 className="w-full h-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none";
-                }}
+                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
               />
             </div>
             <div className="flex-1 min-w-0">
               <h1 className="text-sm font-bold text-text-primary truncate">{company.company}</h1>
-              <p className="text-2xs text-text-muted">{company.ticker} · {company.quarter}</p>
+              <p className="text-2xs text-text-muted">{company.ticker} · {activeQ}</p>
             </div>
             <span className={`text-xs font-medium ${priceColor}`}>
-              ₹{company.price.toLocaleString("en-IN")}
+              {company.price > 0 ? `₹${company.price.toLocaleString("en-IN")}` : "—"}
             </span>
           </div>
-          {/* Score row */}
+          {/* Score row — dominant verdict display */}
           <div className="flex items-center gap-3 mt-2">
+            {/* Verdict pill — large */}
+            <span className={`text-sm font-bold px-3 py-1 rounded-lg ${vc.bg} ${vc.text}`}>
+              {company.verdict.emoji} {company.verdict.label}
+            </span>
+            {/* Score — large */}
             <span className={`text-2xl font-bold ${ScoreColor(company.compositeScore).text}`}>
-              {company.compositeScore.toFixed(1)}<span className="text-sm font-normal text-text-muted">/5</span>
+              {company.compositeScore.toFixed(1)}
+              <span className="text-sm font-normal text-text-muted">/5</span>
             </span>
-            <span className="text-2xs text-text-muted">
-              Capex({company.parameters.capex.score}) + Growth({company.parameters.revenueGrowth.score}) + Margin({company.parameters.marginOutlook.score})
-            </span>
-            <span className="text-2xs font-medium px-1.5 py-0.5 rounded bg-signal-green-bg text-signal-green ml-auto">
-              ✓ {company.confidence.display}
-            </span>
+            {/* Score delta */}
+            {scoreDelta !== 0 && (
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                scoreDelta > 0 ? "bg-signal-green-bg text-signal-green" : "bg-signal-red-bg text-signal-red"
+              }`}>
+                {scoreDelta > 0 ? "▲" : "▼"} {Math.abs(scoreDelta).toFixed(1)} vs {company.previousQuarter}
+              </span>
+            )}
+            {company.confidence.total > 0 && (
+              <span className="text-2xs font-medium px-1.5 py-0.5 rounded ml-auto bg-muted text-text-secondary">
+                ✓ {company.confidence.display}
+              </span>
+            )}
           </div>
         </div>
       </header>
 
       <main className="container py-5 space-y-5">
-        {/* Quarter tabs placeholder */}
-        <div className="flex gap-2">
-          <span className="text-xs font-medium px-3 py-1.5 rounded-md bg-foreground text-card">
-            {company.quarter}
-          </span>
-          {company.previousQuarter && (
-            <span className="text-xs font-medium px-3 py-1.5 rounded-md bg-muted text-text-muted cursor-pointer hover:bg-border transition-colors">
-              {company.previousQuarter}
-            </span>
-          )}
-        </div>
 
-        {/* Section 1 — Summary Strip */}
+        {/* Quarter selector */}
+        {quarters.length > 1 && (
+          <div className="flex gap-2">
+            {quarters.map((q) => (
+              <button key={q} onClick={() => switchQuarter(q)}
+                className={`text-xs font-medium px-3 py-1.5 rounded-md transition-colors ${
+                  q === activeQ
+                    ? "bg-foreground text-card"
+                    : "bg-muted text-text-muted hover:bg-border"
+                }`}>
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* 1 — Action summary + trust line */}
+        {company.investorTake && (
+          <div className={`rounded-xl px-4 py-3 border ${vc.bg}`}>
+            <p className={`text-xs font-semibold leading-relaxed ${vc.text}`}>
+              {company.verdict.emoji} {company.investorTake}
+            </p>
+            {company.confidence.verified > 0 && (
+              <p className="text-2xs text-text-muted mt-2">
+                ✓ Based on {company.confidence.verified} verified management statement{company.confidence.verified !== 1 ? "s" : ""} · {company.quarter}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* 2 — Red flags (Change 3, only shown when triggered) */}
+        {(() => {
+          const flags = detectRedFlags(company);
+          if (!flags.length) return null;
+          return (
+            <div className="rounded-xl px-4 py-3 bg-signal-red-bg border border-signal-red/20 space-y-1.5">
+              <p className="text-xs font-semibold text-signal-red">Watch — signals to monitor</p>
+              {flags.map((f, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <span className="text-signal-red text-xs mt-0.5">⚠</span>
+                  <p className="text-xs text-signal-red">{f}</p>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+
+        {/* 3 — What changed this quarter (Change 3, moved up) */}
+        {company.previousQuarter && (changedParams.length > 0 || stableParams.length > 0) && (
+          <section className="card-base p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-bold text-text-primary">What changed this quarter</h2>
+              <span className="text-2xs text-text-muted">{company.previousQuarter} → {activeQ}</span>
+            </div>
+            {changedParams.length > 0 ? (
+              <div className="space-y-2">
+                {changedParams.map((p) => {
+                  const declined = (p.param.previousScore || 0) > p.param.score;
+                  return (
+                    <div key={p.key} className={`rounded-lg px-3 py-2.5 flex items-center justify-between ${
+                      declined ? "bg-signal-red-bg" : "bg-signal-green-bg"
+                    }`}>
+                      <div>
+                        <span className="text-xs font-semibold text-text-primary">{p.label}</span>
+                        <span className={`text-2xs ml-2 ${declined ? "text-signal-red" : "text-signal-green"}`}>
+                          {declined ? "Eased" : "Improved"}
+                        </span>
+                      </div>
+                      <span className={`text-xs font-bold ${declined ? "text-signal-red" : "text-signal-green"}`}>
+                        {p.param.previousScore} → {p.param.score}
+                      </span>
+                    </div>
+                  );
+                })}
+                {stableParams.map((p) => (
+                  <div key={p.key} className="rounded-lg px-3 py-2 flex items-center justify-between bg-muted/40">
+                    <span className="text-xs text-text-secondary">{p.label}</span>
+                    <span className="text-xs font-semibold text-text-muted">{p.param.score}/5 — unchanged</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-signal-green">✓ All signals held steady this quarter</p>
+            )}
+          </section>
+        )}
+
+        {/* If you own this stock — action box */}
+        {company.investorTake && (
+          <div className="card-base p-4">
+            <p className="text-xs font-semibold text-text-secondary mb-2">If you own this stock</p>
+            <div className="space-y-1.5">
+              {company.investorTake.split(".").filter((s: string) => s.trim().length > 10).slice(0, 3).map((sentence: string, i: number) => {
+                const s = sentence.trim();
+                const isWarning = s.toLowerCase().includes("monitor") || s.toLowerCase().includes("watch") || s.toLowerCase().includes("risk") || s.toLowerCase().includes("decline");
+                const isPositive = s.toLowerCase().includes("maintain") || s.toLowerCase().includes("strong") || s.toLowerCase().includes("positive") || s.toLowerCase().includes("intact");
+                const icon = isWarning ? "⚠" : isPositive ? "✓" : "→";
+                const color = isWarning ? "text-signal-amber" : isPositive ? "text-signal-green" : "text-text-secondary";
+                return (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className={`text-xs font-semibold mt-0.5 ${color}`}>{icon}</span>
+                    <p className={`text-xs leading-relaxed ${color}`}>{s}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* 4 — Summary strip */}
         <div className={`rounded-xl p-3 flex items-center gap-3 flex-wrap ${vc.bg}`}>
           <span className={`text-sm font-bold ${vc.text}`}>{company.verdict.emoji} {company.verdict.label}</span>
           <span className={`text-sm font-bold ${vc.text}`}>{company.compositeScore.toFixed(1)}/5</span>
           <span className="text-xs text-text-secondary">|</span>
-          <span className="text-xs text-text-secondary">{company.overallSummary.slice(0, 80)}…</span>
-          <span className="text-2xs font-medium px-1.5 py-0.5 rounded bg-signal-green-bg text-signal-green ml-auto">
-            ✓ {company.confidence.display}
+          <span className="text-xs text-text-secondary line-clamp-1 flex-1">
+            {company.overallSummary.slice(0, 80)}…
           </span>
+          {company.confidence.total > 0 && (
+            <span className="text-2xs font-medium px-1.5 py-0.5 rounded ml-auto bg-muted text-text-secondary">
+              ✓ {company.confidence.display}
+            </span>
+          )}
         </div>
 
-        {/* Section 2 — Investment Thesis */}
+        {/* 5 — Investment thesis */}
         <section className="card-base p-4 space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
             <div className="flex items-center gap-2">
@@ -274,35 +561,29 @@ export default function CompanyDetail() {
                 {company.thesisPassed}/{company.thesisTotal} passed
               </span>
             </div>
-            <button
-              onClick={() => setShowEvidence(!showEvidence)}
-              className="text-2xs text-signal-blue hover:underline"
-            >
+            <button onClick={() => setShowEvidence(!showEvidence)}
+              className="text-2xs text-signal-blue hover:underline">
               {showEvidence ? "Hide" : "Show"} evidence & sources
             </button>
           </div>
 
-          {/* Progress bar */}
           <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
-            <div
-              className="h-full bg-signal-green rounded-full transition-all"
-              style={{ width: `${(company.thesisPassed / company.thesisTotal) * 100}%` }}
-            />
+            <div className="h-full bg-signal-green rounded-full transition-all"
+              style={{ width: `${(company.thesisPassed / company.thesisTotal) * 100}%` }} />
           </div>
 
-          {/* Thesis rows */}
           <div className="space-y-1">
             {thesisEntries.map((entry) => (
-              <div key={entry.key} className={`rounded-lg p-3 ${ThesisRowColor(entry.data.answer)}`}>
+              <div key={entry.key} className={`rounded-lg p-3 ${ThesisRowBg(entry.data.answer)}`}>
                 <div className="flex items-start gap-2">
-                  <span className="mt-0.5">{ThesisIcon(entry.data.answer)}</span>
+                  <span className="mt-0.5"><ThesisIcon answer={entry.data.answer} /></span>
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold text-text-primary">{entry.label}</p>
                     <p className="text-xs text-text-secondary mt-0.5">{entry.data.summary}</p>
                     {showEvidence && (
                       <div className="mt-2 space-y-1">
-                        <p className="text-2xs text-text-muted leading-relaxed">{entry.data.evidence}</p>
-                        <span className="text-2xs text-text-muted italic">Source: {entry.data.source}</span>
+                        <p className="text-2xs text-text-muted leading-relaxed italic">"{entry.data.evidence}"</p>
+                        <span className="text-2xs text-text-muted">Source: {entry.data.source}</span>
                       </div>
                     )}
                   </div>
@@ -311,40 +592,43 @@ export default function CompanyDetail() {
             ))}
           </div>
 
-          {/* Management Tone */}
+          {/* Management tone */}
           <div className={`rounded-lg p-3 ${tc.bg}`}>
             <div className="flex items-center gap-2 mb-1">
-              <span className={`w-2 h-2 rounded-full ${tc.text === "text-signal-green" ? "bg-signal-green" : tc.text === "text-signal-amber" ? "bg-signal-amber" : "bg-signal-red"}`} />
+              <span className={`w-2 h-2 rounded-full ${tc.dot}`} />
               <span className={`text-xs font-semibold ${tc.text}`}>
-                Management Tone: {company.managementTone.charAt(0).toUpperCase() + company.managementTone.slice(1)}
+                Management tone: {company.managementTone.charAt(0).toUpperCase() + company.managementTone.slice(1)}
               </span>
             </div>
-            <p className="text-xs italic text-text-secondary">"{company.thesis.managementTone.keyQuote}"</p>
-            <p className="text-2xs text-text-muted mt-1">Source: {company.thesis.managementTone.source}</p>
+            {company.thesis.managementTone.keyQuote && (
+              <p className="text-xs italic text-text-secondary">"{company.thesis.managementTone.keyQuote}"</p>
+            )}
+            {company.thesis.managementTone.source && (
+              <p className="text-2xs text-text-muted mt-1">Source: {company.thesis.managementTone.source}</p>
+            )}
           </div>
         </section>
 
-        {/* Section 3 — Buy/Hold/Weak Signal */}
+        {/* Signal section */}
         <section className="card-base p-4 space-y-3">
-          <h2 className={`text-sm font-bold ${vc.text}`}>
-            {company.verdict.key === "buy"
-              ? "STRONG BUY SIGNAL"
-              : company.verdict.key === "hold"
-              ? "HOLD — MONITOR"
-              : "WEAK — CAUTION"}
-          </h2>
-
-          {scoreDelta !== 0 ? (
-            <span className={`text-2xs font-medium px-2 py-0.5 rounded-full ${scoreDelta < 0 ? "bg-signal-red-bg text-signal-red" : "bg-signal-green-bg text-signal-green"}`}>
-              {scoreDelta > 0 ? "▲" : "▼"} {Math.abs(scoreDelta).toFixed(1)} vs {company.previousQuarter} — {Math.abs(scoreDelta) <= 0.5 ? "minor change" : "significant change"}
-            </span>
-          ) : (
-            company.previousQuarter && (
-              <span className="text-2xs font-medium px-2 py-0.5 rounded-full bg-signal-neutral-bg text-signal-neutral">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <h2 className={`text-sm font-bold ${vc.text}`}>
+              {company.verdict.key === "buy"  ? "STRONG BUY SIGNAL" :
+               company.verdict.key === "hold" ? "HOLD — MONITOR"   : "WEAK — CAUTION"}
+            </h2>
+            {scoreDelta !== 0 ? (
+              <span className={`text-2xs font-medium px-2 py-0.5 rounded-full ${
+                scoreDelta < 0 ? "bg-signal-red-bg text-signal-red" : "bg-signal-green-bg text-signal-green"
+              }`}>
+                {scoreDelta > 0 ? "▲" : "▼"} {Math.abs(scoreDelta).toFixed(1)} vs {company.previousQuarter}
+                {Math.abs(scoreDelta) <= 0.5 ? " — minor" : " — significant"}
+              </span>
+            ) : company.previousQuarter ? (
+              <span className="text-2xs font-medium px-2 py-0.5 rounded-full bg-muted text-text-muted">
                 Unchanged vs {company.previousQuarter}
               </span>
-            )
-          )}
+            ) : null}
+          </div>
 
           <div className="flex flex-wrap gap-2">
             {params.map((p) => {
@@ -363,7 +647,7 @@ export default function CompanyDetail() {
                 const declined = (p.param.previousScore || 0) > p.param.score;
                 return (
                   <p key={p.key} className={`text-xs ${declined ? "text-signal-red" : "text-signal-green"}`}>
-                    {declined ? "▼" : "▲"} {p.label} {declined ? "declined" : "improved"} ({p.param.previousScore}→{p.param.score})
+                    {declined ? "▼" : "▲"} {p.label} {declined ? "eased" : "improved"} ({p.param.previousScore}→{p.param.score})
                   </p>
                 );
               })}
@@ -371,63 +655,9 @@ export default function CompanyDetail() {
           )}
         </section>
 
-        {/* Section 4 — QoQ Trends */}
-        {company.previousQuarter && (
-          <section className="card-base p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-bold text-text-primary">Quarter-on-quarter</h2>
-              <span className="text-2xs text-text-muted">{company.previousQuarter} → {company.quarter}</span>
-            </div>
 
-            {changedParams.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold text-text-secondary mb-2">What changed ({changedParams.length})</p>
-                <div className="space-y-2">
-                  {changedParams.map((p) => {
-                    const declined = (p.param.previousScore || 0) > p.param.score;
-                    const bg = declined ? "bg-signal-red-bg" : "bg-signal-green-bg";
-                    const text = declined ? "text-signal-red" : "text-signal-green";
-                    return (
-                      <div key={p.key} className={`rounded-lg p-3 ${bg}`}>
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-semibold text-text-primary">{p.label}</span>
-                          <span className={`text-xs font-bold ${text}`}>
-                            {p.param.previousScore}→{p.param.score}
-                          </span>
-                        </div>
-                        <span className={`text-2xs font-medium ${text}`}>
-                          {declined ? "Eased" : "Improved"}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
 
-            {stableParams.length > 0 && (
-              <div>
-                <p className="text-xs font-semibold text-text-secondary mb-2">What stayed the same ({stableParams.length})</p>
-                <div className="space-y-1">
-                  {stableParams.map((p) => (
-                    <div key={p.key} className="rounded-lg p-3 bg-signal-neutral-bg flex items-center justify-between">
-                      <span className="text-xs text-text-secondary">{p.label}</span>
-                      <span className="text-xs font-semibold text-text-primary">{p.param.score}/5</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className={`text-xs p-2 rounded-lg ${changedParams.some((p) => (p.param.previousScore || 0) > p.param.score) ? "bg-signal-amber-bg text-signal-amber" : "bg-signal-green-bg text-signal-green"}`}>
-              {changedParams.some((p) => (p.param.previousScore || 0) > p.param.score)
-                ? `⚠ Watch: ${changedParams.filter((p) => (p.param.previousScore || 0) > p.param.score).map((p) => p.label).join(", ")} declining`
-                : "✓ All signals held steady"}
-            </div>
-          </section>
-        )}
-
-        {/* Section 5 — Analyst Summary */}
+        {/* Analyst summary */}
         <section className="rounded-xl p-4 space-y-3 bg-signal-blue-bg">
           <div>
             <h3 className="text-xs font-semibold text-signal-blue mb-1">What happened this quarter</h3>
@@ -439,39 +669,48 @@ export default function CompanyDetail() {
           </div>
         </section>
 
-        {/* Section 6 — Parameter Breakdown */}
+        {/* Parameter breakdown */}
         <section className="space-y-3">
-          <h2 className="text-sm font-bold text-text-primary">Parameter Breakdown</h2>
+          <h2 className="text-sm font-bold text-text-primary">Parameter breakdown</h2>
           {params.map((p) => (
-            <ParameterCard key={p.key} label={p.label} icon={p.icon} param={p.param} />
+            <ParameterCard key={p.key} label={p.label} icon={p.icon} param={p.param}
+              prevQ={company.previousQuarter} curQ={activeQ} />
           ))}
         </section>
 
-        {/* Section 7 — Risk Factors */}
-        <section className="rounded-xl p-4 bg-signal-red-bg space-y-2">
-          <h2 className="text-sm font-bold text-signal-red">Risk Factors</h2>
-          {company.riskFactors.map((risk, i) => {
-            const sevColor =
-              risk.severity === "HIGH"
-                ? "bg-signal-red text-card"
-                : risk.severity === "MEDIUM"
-                ? "bg-signal-amber text-card"
-                : "bg-signal-neutral text-card";
-            return (
-              <div key={i} className="flex items-start gap-2">
-                <span className={`text-2xs font-bold px-1.5 py-0.5 rounded ${sevColor} flex-shrink-0 mt-0.5`}>
-                  {risk.severity}
-                </span>
-                <p className="text-xs text-text-secondary">{risk.description}</p>
-              </div>
-            );
-          })}
-        </section>
+        {/* Risk factors */}
+        {company.riskFactors.length > 0 && (
+          <section className="rounded-xl p-4 bg-signal-red-bg space-y-2">
+            <h2 className="text-sm font-bold text-signal-red">Risk factors</h2>
+            {company.riskFactors.map((risk, i) => {
+              const sevColor =
+                risk.severity === "HIGH"   ? "bg-signal-red text-card" :
+                risk.severity === "MEDIUM" ? "bg-signal-amber text-card" :
+                                             "bg-muted text-text-secondary";
+              return (
+                <div key={i} className="flex items-start gap-2">
+                  <span className={`text-2xs font-bold px-1.5 py-0.5 rounded ${sevColor} flex-shrink-0 mt-0.5`}>
+                    {risk.severity}
+                  </span>
+                  <p className="text-xs text-text-secondary">{risk.description}</p>
+                </div>
+              );
+            })}
+          </section>
+        )}
 
         {/* Footer */}
         <footer className="text-center py-4 border-t border-border">
-          <p className="text-2xs text-text-muted">Processed {company.processedAt} · Claude Haiku</p>
+          <p className="text-2xs text-text-muted">
+            Processed {company.processedAt} ·{" "}
+            <button onClick={() => setShowModal(true)}
+              className="text-signal-blue hover:underline">
+              How scores work ↗
+            </button>
+          </p>
         </footer>
+        {showModal && <HowScoresModal onClose={() => setShowModal(false)} />}
+
       </main>
     </div>
   );
