@@ -40,11 +40,12 @@ function ScoreDelta({ current, previous }: { current: number; previous?: number 
 
 // ── Attention tag — computed from data, never crashes ─────────────────────
 function AttentionTag({ company }: { company: CompanyInsight }) {
-  // 🆕 NEW — processed within 7 days
+  // 🆕 NEW — processed within 7 days AND no previous quarter
+  // (if previous quarter exists, it's not "new" — it's just updated)
   const isNew = (() => {
     try {
       const days = (Date.now() - new Date(company.processedAt).getTime()) / 86400000;
-      return days <= 7;
+      return days <= 7 && !company.previousQuarter;
     } catch { return false; }
   })();
 

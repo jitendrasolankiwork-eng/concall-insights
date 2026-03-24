@@ -1,6 +1,7 @@
 import { useParams, Link } from "react-router-dom";
 import { useState, useEffect } from "react";
 import { fetchCompany, fetchCompanyByQuarter, fetchAvailableQuarters } from "@/lib/api";
+import ValuationSection from "@/components/ValuationSection";
 import { CompanyInsight, Parameter } from "@/types/portfolio";
 
 // ── Color helpers ──────────────────────────────────────────────────────────────
@@ -293,6 +294,9 @@ export default function CompanyDetail() {
   const [activeQ,    setActiveQ]    = useState<string>("");
   const [showEvidence, setShowEvidence] = useState(false);
   const [showModal,    setShowModal]    = useState(false);
+  const [valuation,          setValuation]          = useState<any>(null);
+  const [marketCap,          setMarketCap]          = useState<number | null>(null);
+  const [valuationEstimate,  setValuationEstimate]  = useState<any>(null);
 
   // Load latest on mount
   useEffect(() => {
@@ -300,11 +304,16 @@ export default function CompanyDetail() {
     Promise.all([
       fetchCompany(sym),
       fetchAvailableQuarters(sym),
+      fetch(`/api/company/${sym.toUpperCase()}`).then(r => r.json()),
     ])
-      .then(([data, qtrs]) => {
-        setCompany(data);
+      .then(([res, qtrs, rawResp]) => {
+        setCompany(res);
         setQuarters(qtrs);
-        setActiveQ(data.quarter);
+        setActiveQ(res.quarter);
+        // Read valuation + marketCap directly from raw API response
+        setValuation(rawResp.valuation || rawResp.latestInsight?.valuation || null);
+        setMarketCap(rawResp.marketCap || rawResp.latestInsight?.marketCap || null);
+        setValuationEstimate(rawResp.valuationEstimate || rawResp.latestInsight?.valuationEstimate || null);
         setLoading(false);
       })
       .catch((e) => { setError(e.message); setLoading(false); });
@@ -677,6 +686,14 @@ export default function CompanyDetail() {
               prevQ={company.previousQuarter} curQ={activeQ} />
           ))}
         </section>
+
+        {/* Valuation section */}
+        <ValuationSection
+          valuationEstimate={valuationEstimate}
+          marketCap={marketCap}
+          quarter={activeQ}
+          price={company.price}
+        />
 
         {/* Risk factors */}
         {company.riskFactors.length > 0 && (
