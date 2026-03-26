@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://ai-portfolio-tracker.up.railway.app/api/:path*"
+      "destination": "https://portfolio-tracker-backend-pi.vercel.app/api/:path*"
     }
   ]
 }
