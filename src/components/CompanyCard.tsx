@@ -9,6 +9,8 @@ function CompanyLogo({ slug, company }: { slug: string; company: string }) {
         src={`https://s3-symbol-logo.tradingview.com/${slug}--big.svg`}
         alt={company}
         className="w-full h-full object-cover"
+        referrerPolicy="no-referrer"
+        crossOrigin="anonymous"
         onError={(e) => {
           const t = e.target as HTMLImageElement;
           t.style.display = "none";

@@ -490,6 +490,8 @@ export default function CompanyDetail() {
                 src={`https://s3-symbol-logo.tradingview.com/${company.slug}--big.svg`}
                 alt={company.company}
                 className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+                crossOrigin="anonymous"
                 onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
               />
             </div>
