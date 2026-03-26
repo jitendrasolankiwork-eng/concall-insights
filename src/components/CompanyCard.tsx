@@ -3,6 +3,9 @@ import { CompanyInsight } from "@/types/portfolio";
 import { Link } from "react-router-dom";
 
 // ── Logo ──────────────────────────────────────────────────────────────────
+// Only slugs confirmed to return 200 from TradingView CDN
+const CONFIRMED_SLUGS = new Set(["zomato", "hdfc-bank", "polycab"]);
+
 const AVATAR_COLORS = [
   "bg-signal-blue-bg text-signal-blue",
   "bg-signal-green-bg text-signal-green",
@@ -14,11 +17,12 @@ const AVATAR_COLORS = [
 function CompanyLogo({ slug, company }: { slug: string; company: string }) {
   const [failed, setFailed] = useState(false);
   const color = AVATAR_COLORS[company.charCodeAt(0) % AVATAR_COLORS.length];
+  const hasLogo = CONFIRMED_SLUGS.has(slug) && !failed;
 
-  if (failed) {
+  if (!hasLogo) {
     return (
-      <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${color}`}>
-        <span className="text-sm font-bold">{company.charAt(0).toUpperCase()}</span>
+      <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-sm ${color}`}>
+        {company.charAt(0).toUpperCase()}
       </div>
     );
   }

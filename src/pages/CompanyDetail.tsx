@@ -486,14 +486,19 @@ export default function CompanyDetail() {
           <div className="flex items-center gap-3">
             <Link to="/" className="text-text-muted hover:text-text-primary transition-colors text-base leading-none">←</Link>
             <div className="w-10 h-10 rounded-xl overflow-hidden bg-muted flex items-center justify-center flex-shrink-0 border border-border">
-              <img
-                src={`https://s3-symbol-logo.tradingview.com/${company.slug}--big.svg`}
-                alt={company.company}
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-                crossOrigin="anonymous"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-              />
+              {["zomato","hdfc-bank","polycab"].includes(company.slug) ? (
+                <img
+                  src={`https://s3-symbol-logo.tradingview.com/${company.slug}--big.svg`}
+                  alt={company.company}
+                  className="w-full h-full object-cover"
+                  referrerPolicy="no-referrer"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                />
+              ) : (
+                <span className="text-sm font-bold text-text-secondary">
+                  {company.company.charAt(0).toUpperCase()}
+                </span>
+              )}
             </div>
             <div className="flex-1 min-w-0">
               <h1 className="text-base font-extrabold text-text-primary truncate tracking-tight leading-tight">
