@@ -25,6 +25,17 @@ const modeColor = (mode: string) =>
   mode === "DERIVED" ? "bg-signal-amber-bg text-signal-amber border-signal-amber/20" :
                        "bg-signal-red-bg text-signal-red border-signal-red/20";
 
+const pegVerdict = (peg: number | null, peRange: string): { label: string; cls: string } => {
+  if (peg === null) {
+    const pe = extractPEMidpoint(peRange);
+    if (pe && pe > 50) return { label: "⚪ Pre-profit", cls: "bg-muted text-text-muted border-border" };
+    return { label: "⚪ No PEG data", cls: "bg-muted text-text-muted border-border" };
+  }
+  if (peg < 1)    return { label: "🟢 Undervalued", cls: "bg-signal-green-bg text-signal-green border-signal-green/20" };
+  if (peg <= 1.5) return { label: "🟡 Fair value",  cls: "bg-signal-amber-bg text-signal-amber border-signal-amber/20" };
+  return           { label: "🔴 Expensive",         cls: "bg-signal-red-bg text-signal-red border-signal-red/20" };
+};
+
 const confLabel = (conf: string) =>
   conf === "HIGH"   ? "Strong management guidance" :
   conf === "MEDIUM" ? "Based on management commentary" :
@@ -84,6 +95,28 @@ const extractPEMidpoint = (peRange: string): number | null => {
   return (parseFloat(nums[0]) + parseFloat(nums[1])) / 2;
 };
 
+// ── Extract revenue midpoint in Cr from raw string ───────────────────────
+const extractRevenueMidpointCr = (raw: string): number | null => {
+  const clean = raw.replace(/[₹,\s]/g, "");
+  // Range: "1240-1395Cr" or "1240Cr-1395Cr"
+  const range = clean.match(/(\d+(?:\.\d+)?)(?:Cr)?[-–](\d+(?:\.\d+)?)(?:Cr)?/i);
+  if (range) return (parseFloat(range[1]) + parseFloat(range[2])) / 2;
+  // Mn range: "12400-13950Mn"
+  const mnRange = clean.match(/(\d+(?:\.\d+)?)(?:Mn)?[-–](\d+(?:\.\d+)?)Mn/i);
+  if (mnRange) return ((parseFloat(mnRange[1]) + parseFloat(mnRange[2])) / 2) / 10;
+  // Single value
+  const single = clean.match(/(\d+(?:\.\d+)?)Cr/i);
+  if (single) return parseFloat(single[1]);
+  return null;
+};
+
+// ── Price/Sales ratio ─────────────────────────────────────────────────────
+const calcPS = (marketCap: number, revenueRange: string): string | null => {
+  const rev = extractRevenueMidpointCr(revenueRange);
+  if (!rev || rev === 0) return null;
+  return (marketCap / rev).toFixed(1) + "x";
+};
+
 // ── FY labels from quarter ────────────────────────────────────────────────
 const getFYLabels = (quarter: string) => {
   const m = quarter.match(/FY(\d+)/);
@@ -92,28 +125,46 @@ const getFYLabels = (quarter: string) => {
   return { fy1: `FY${cur + 1}`, fy2: `FY${cur + 2}` };
 };
 
-// ── Plain English insight ─────────────────────────────────────────────────
+// ── Plain English insight — returns bullet array ──────────────────────────
 const buildInsight = (
   peRange: string,
   peg: number | null,
   price: number,
-  growthAssumption: string
-): string => {
+  growthAssumption: string,
+  marketCap: number | null,
+  fy1RevenueRange: string,
+  fy1Label: string,
+): string[] => {
   const pe = extractPEMidpoint(peRange);
-  if (!pe) return "";
+  if (!pe) return [];
   const growthMatch = growthAssumption.match(/(\d+)[\s–-]+(\d+)%/);
   const growthMid = growthMatch
     ? ((parseInt(growthMatch[1]) + parseInt(growthMatch[2])) / 2).toFixed(0)
     : null;
-  const priceStr = price > 0 ? `At ₹${price.toLocaleString("en-IN")}, ` : "";
-  const peStr = `you are paying ~${pe.toFixed(0)}x next year's estimated earnings`;
-  const growthStr = growthMid ? ` for a business growing ~${growthMid}% annually` : "";
-  const pegStr = peg !== null
-    ? peg < 1   ? ` — PEG of ${peg.toFixed(1)} suggests the stock looks attractively valued for its growth.`
-    : peg < 1.5 ? ` — PEG of ${peg.toFixed(1)} suggests fair valuation for the growth trajectory.`
-                : ` — PEG of ${peg.toFixed(1)} suggests the stock may be pricing in high expectations.`
-    : ".";
-  return `${priceStr}${peStr}${growthStr}${pegStr}`;
+
+  // Pre-profit company (PE > 100x and no PEG) — use P/Sales framing
+  if (peg === null && pe > 100 && marketCap) {
+    const ps = calcPS(marketCap, fy1RevenueRange);
+    const bullets: string[] = [];
+    if (price > 0) bullets.push(`Current price: ₹${price.toLocaleString("en-IN")}`);
+    bullets.push(`PE ~${pe.toFixed(0)}x reflects near-zero earnings (pre-profit company)`);
+    if (ps) bullets.push(`Price/Sales: ~${ps} ${fy1Label} revenue — more useful metric at this stage`);
+    if (growthMid) bullets.push(`Revenue growing ~${growthMid}% annually`);
+    bullets.push(`Market is pricing in a successful path to profitability`);
+    return bullets;
+  }
+
+  // Profitable company
+  const bullets: string[] = [];
+  if (price > 0) bullets.push(`Current price: ₹${price.toLocaleString("en-IN")}`);
+  bullets.push(`Paying ~${pe.toFixed(0)}x next year's estimated earnings`);
+  if (growthMid) bullets.push(`Revenue growing ~${growthMid}% annually`);
+  if (peg !== null) {
+    if (peg < 1)    bullets.push(`PEG ${peg.toFixed(1)} — stock looks attractively valued for its growth`);
+    else if (peg < 1.5) bullets.push(`PEG ${peg.toFixed(1)} — fair valuation for the growth trajectory`);
+    else            bullets.push(`PEG ${peg.toFixed(1)} — stock may be pricing in high expectations`);
+  }
+  return bullets;
 };
 
 export default function ValuationSection({ valuationEstimate, marketCap, quarter, price }: Props) {
@@ -144,7 +195,21 @@ export default function ValuationSection({ valuationEstimate, marketCap, quarter
   const pe   = splitVal(ve.valuation.peRange);
   const revAssm = splitAssumption(ve.assumptions.revenueGrowth);
   const patAssm = splitAssumption(ve.assumptions.patMargin);
-  const insight = buildInsight(ve.valuation.peRange, ve.valuation.peg, price, ve.assumptions.revenueGrowth);
+
+  // Coerce peg to number — API may return it as a string
+  const rawPeg = ve.valuation.peg;
+  const peg    = rawPeg === null || rawPeg === undefined ? null : Number(rawPeg);
+
+  const peMidpoint   = extractPEMidpoint(ve.valuation.peRange);
+  const isPreProfit  = peg === null && peMidpoint !== null && peMidpoint > 50;
+  const psRatio      = isPreProfit && marketCap ? calcPS(marketCap, ve.estimates.fy1.revenueRange) : null;
+  const verdict      = pegVerdict(peg, ve.valuation.peRange);
+
+  const insight = buildInsight(
+    ve.valuation.peRange, peg, price,
+    ve.assumptions.revenueGrowth, marketCap,
+    ve.estimates.fy1.revenueRange, fy1,
+  );
 
   return (
     <section className="card-base p-4 space-y-4">
@@ -155,6 +220,9 @@ export default function ValuationSection({ valuationEstimate, marketCap, quarter
           <h2 className="text-sm font-bold text-text-primary">Forward valuation</h2>
           <span className={`text-2xs font-medium px-2 py-0.5 rounded-full border ${modeColor(ve.mode)}`}>
             {ve.mode === "GUIDED" ? "Management guided" : ve.mode === "DERIVED" ? "Analyst derived" : "Baseline estimate"}
+          </span>
+          <span className={`text-2xs font-semibold px-2 py-0.5 rounded-full border ${verdict.cls}`}>
+            {verdict.label}
           </span>
           <span className="text-2xs text-text-muted">{confLabel(ve.confidence)}</span>
         </div>
@@ -200,28 +268,60 @@ export default function ValuationSection({ valuationEstimate, marketCap, quarter
         {/* Forward PE */}
         <div className="grid gap-3 py-2 border-b border-border/50"
           style={{ gridTemplateColumns: "130px minmax(0,1fr) minmax(0,1.4fr)" }}>
-          <div className="text-xs font-semibold text-text-primary pt-0.5">Forward PE</div>
+          <div className="text-xs font-semibold text-text-primary pt-0.5">
+            {isPreProfit ? `${fy2} Forward PE` : "Forward PE"}
+          </div>
           <div className="text-xs font-bold text-signal-amber">{pe.value}</div>
-          <div className="text-2xs text-text-muted leading-relaxed">{pe.note}</div>
+          <div className="text-2xs text-text-muted leading-relaxed">
+            {isPreProfit ? `Based on ${fy2} PAT (${fy1} earnings near zero)` : pe.note}
+          </div>
         </div>
 
-        {/* PEG */}
-        {ve.valuation.peg !== null && (
-          <div className="grid gap-3 py-2"
+        {/* P/Sales — shown for pre-profit companies */}
+        {isPreProfit && psRatio && (
+          <div className="grid gap-3 py-2 border-b border-border/50"
             style={{ gridTemplateColumns: "130px minmax(0,1fr) minmax(0,1.4fr)" }}>
-            <div className="text-xs font-semibold text-text-primary">PEG</div>
-            <div className={`text-xs font-bold ${ve.valuation.peg < 1 ? "text-signal-green" : ve.valuation.peg < 1.5 ? "text-signal-amber" : "text-signal-red"}`}>
-              {typeof ve.valuation.peg === "number" ? ve.valuation.peg.toFixed(1) : ve.valuation.peg}
+            <div className="text-xs font-semibold text-text-primary pt-0.5">{fy1} Price/Sales</div>
+            <div className="text-xs font-bold text-signal-blue">{psRatio}</div>
+            <div className="text-2xs text-text-muted leading-relaxed">
+              Mcap ÷ {fy1} revenue midpoint — more reliable metric for pre-profit companies
             </div>
-            <div className="text-2xs text-text-muted">PE midpoint ÷ growth %</div>
           </div>
         )}
+
+        {/* PEG */}
+        <div className="grid gap-3 py-2"
+          style={{ gridTemplateColumns: "130px minmax(0,1fr) minmax(0,1.4fr)" }}>
+          <div className="text-xs font-semibold text-text-primary">PEG</div>
+          {peg !== null ? (
+            <>
+              <div className={`text-xs font-bold ${peg < 1 ? "text-signal-green" : peg < 1.5 ? "text-signal-amber" : "text-signal-red"}`}>
+                {peg.toFixed(1)}
+              </div>
+              <div className="text-2xs text-text-muted">PE midpoint ÷ growth %</div>
+            </>
+          ) : (
+            <>
+              <div className="text-xs text-text-muted">N/A</div>
+              <div className="text-2xs text-text-muted">
+                {isPreProfit
+                  ? "Not meaningful — earnings near zero. Use Price/Sales instead."
+                  : "Insufficient data to calculate PEG."}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* Plain English insight */}
-      {insight && (
-        <div className="bg-muted/40 rounded-lg px-3 py-2.5">
-          <p className="text-xs text-text-primary leading-relaxed">{insight}</p>
+      {/* Plain English insight — bullet list */}
+      {insight.length > 0 && (
+        <div className="bg-muted/40 rounded-lg px-3 py-2.5 space-y-1">
+          {insight.map((bullet, i) => (
+            <div key={i} className="flex items-start gap-2">
+              <span className="text-text-muted text-xs mt-0.5 flex-shrink-0">·</span>
+              <p className="text-xs text-text-primary leading-relaxed">{bullet}</p>
+            </div>
+          ))}
         </div>
       )}
 

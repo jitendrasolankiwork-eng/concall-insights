@@ -73,4 +73,5 @@ export interface CompanyInsight {
   price: number;
   priceChange: number;
   managementTone: "confident" | "cautious" | "defensive";
+  investmentType?: string;
 }

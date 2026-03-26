@@ -113,7 +113,14 @@ export default function CompanyCard({ company }: { company: CompanyInsight }) {
             <h3 className="text-sm font-semibold text-text-primary truncate">{company.company}</h3>
             <AttentionTag company={company} />
           </div>
-          <p className="text-xs text-text-muted">{company.ticker} · {company.quarter}</p>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs text-text-muted">{company.ticker} · {company.quarter}</span>
+            {company.investmentType && (
+              <span className="text-2xs font-medium px-1.5 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/20">
+                {company.investmentType}
+              </span>
+            )}
+          </div>
         </div>
         {/* Score + delta stacked */}
         <div className="flex flex-col items-end gap-1 shrink-0">
