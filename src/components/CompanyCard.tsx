@@ -1,8 +1,28 @@
+import { useState } from "react";
 import { CompanyInsight } from "@/types/portfolio";
 import { Link } from "react-router-dom";
 
 // ── Logo ──────────────────────────────────────────────────────────────────
+const AVATAR_COLORS = [
+  "bg-signal-blue-bg text-signal-blue",
+  "bg-signal-green-bg text-signal-green",
+  "bg-signal-amber-bg text-signal-amber",
+  "bg-signal-red-bg text-signal-red",
+  "bg-muted text-text-secondary",
+];
+
 function CompanyLogo({ slug, company }: { slug: string; company: string }) {
+  const [failed, setFailed] = useState(false);
+  const color = AVATAR_COLORS[company.charCodeAt(0) % AVATAR_COLORS.length];
+
+  if (failed) {
+    return (
+      <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${color}`}>
+        <span className="text-sm font-bold">{company.charAt(0).toUpperCase()}</span>
+      </div>
+    );
+  }
+
   return (
     <div className="w-10 h-10 rounded-full overflow-hidden bg-muted flex items-center justify-center flex-shrink-0">
       <img
@@ -10,18 +30,7 @@ function CompanyLogo({ slug, company }: { slug: string; company: string }) {
         alt={company}
         className="w-full h-full object-cover"
         referrerPolicy="no-referrer"
-        crossOrigin="anonymous"
-        onError={(e) => {
-          const t = e.target as HTMLImageElement;
-          t.style.display = "none";
-          const p = t.parentElement;
-          if (p) {
-            const fb = document.createElement("span");
-            fb.className = "text-sm font-bold text-text-muted";
-            fb.textContent = company.charAt(0);
-            p.appendChild(fb);
-          }
-        }}
+        onError={() => setFailed(true)}
       />
     </div>
   );
