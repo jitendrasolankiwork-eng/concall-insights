@@ -5,20 +5,21 @@ import type { CompanyInsight } from "@/types/portfolio";
 
 // ── Auto-load all processed companies from backend ────────────────────────
 const useAllCompanies = () => {
-  const [companies, setCompanies] = useState<CompanyInsight[]>([]);
-  const [loading,   setLoading]   = useState(true);
+  const [companies,  setCompanies]  = useState<CompanyInsight[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
-    // Fetch all tickers from /api/admin/insights
+    setLoading(true);
+    setError(false);
     fetch("/api/admin/insights")
       .then((r) => r.json())
       .then(async (data) => {
-        if (!data.success) return;
+        if (!data.success) { setError(true); setLoading(false); return; }
         const tickers: string[] = data.companies
           .filter((c: any) => c.quarters?.length > 0)
           .map((c: any) => c.symbol);
-
-        // Fetch each company in parallel
         const results = await Promise.allSettled(
           tickers.map((t) => fetchCompany(t))
         );
@@ -28,10 +29,11 @@ const useAllCompanies = () => {
         setCompanies(loaded);
         setLoading(false);
       })
-      .catch(() => setLoading(false));
-  }, []);
+      .catch(() => { setLoading(false); setError(true); });
+  }, [retryCount]);
 
-  return { companies, loading };
+  const retry = () => setRetryCount((c) => c + 1);
+  return { companies, loading, error, retry };
 };
 
 // ── How Scores Work Modal ─────────────────────────────────────────────────
@@ -219,7 +221,7 @@ function sortCompanies(companies: CompanyInsight[], sort: SortKey): CompanyInsig
 
 // ── Dashboard ─────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const { companies, loading } = useAllCompanies();
+  const { companies, loading, error, retry } = useAllCompanies();
   const [sort,      setSort]      = useState<SortKey>("score");
   const [filter,    setFilter]    = useState<FilterKey>("all");
   const [showModal, setShowModal] = useState(false);
@@ -301,11 +303,21 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Empty state */}
-        {!loading && companies.length === 0 && (
-          <div className="card-base p-8 text-center">
-            <p className="text-sm font-semibold text-text-primary mb-1">No companies processed yet</p>
-            <p className="text-xs text-text-muted">Add companies to your Google Sheet and run the pipeline</p>
+        {/* Empty / error state */}
+        {!loading && (error || companies.length === 0) && (
+          <div className="card-base p-8 text-center space-y-3">
+            <p className="text-sm font-semibold text-text-primary">
+              {error ? "Couldn't load companies" : "No companies processed yet"}
+            </p>
+            <p className="text-xs text-text-muted">
+              {error ? "Check your connection and try again" : "Add companies to your Google Sheet and run the pipeline"}
+            </p>
+            {error && (
+              <button onClick={retry}
+                className="mt-1 text-xs font-semibold px-5 py-2 rounded-full bg-signal-blue text-white hover:opacity-90 transition-opacity">
+                Retry
+              </button>
+            )}
           </div>
         )}
 

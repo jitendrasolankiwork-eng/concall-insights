@@ -125,7 +125,7 @@ export default function CompanyCard({ company }: { company: CompanyInsight }) {
         <CompanyLogo slug={company.slug} company={company.company} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-sm font-semibold text-text-primary truncate">{company.company}</h3>
+            <h3 className="text-sm font-bold text-text-primary truncate">{company.company}</h3>
             <AttentionTag company={company} />
           </div>
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -137,12 +137,23 @@ export default function CompanyCard({ company }: { company: CompanyInsight }) {
             )}
           </div>
         </div>
-        {/* Score + delta stacked */}
+        {/* Score + bar + delta stacked */}
         <div className="flex flex-col items-end gap-1 shrink-0">
-          <span className={`text-lg font-bold ${vc.text}`}>
+          <span className={`text-xl font-black ${vc.text}`}>
             {company.compositeScore.toFixed(1)}
             <span className="text-xs font-normal text-text-muted"> /5</span>
           </span>
+          <div className="flex gap-0.5 w-14">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className={`h-1 flex-1 rounded-full ${
+                i <= Math.round(company.compositeScore)
+                  ? company.verdict.key === "buy"  ? "bg-signal-green"
+                  : company.verdict.key === "hold" ? "bg-signal-amber"
+                  : "bg-signal-red"
+                  : "bg-muted"
+              }`} />
+            ))}
+          </div>
           <ScoreDelta current={company.compositeScore} previous={company.previousCompositeScore} />
         </div>
       </div>

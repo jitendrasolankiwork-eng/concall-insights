@@ -80,7 +80,7 @@ const BULLET_SPLIT_RE =
   /\.\s+|;\s+|,\s+(?=but\s|however\s|achieving\s|while\s|although\s|despite\s|with\s+(?=\d)|note\s)/i;
 
 function splitIntoBullets(text: string, minLength = 12): string[] {
-  // First pass — split on natural boundaries
+  const ORPHAN_MIN = 40; // bullets shorter than this get merged into the previous one
   const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
   let parts = text
@@ -103,7 +103,17 @@ function splitIntoBullets(text: string, minLength = 12): string[] {
     }
     result.push(part);
   }
-  return result;
+
+  // Merge orphans: bullets shorter than ORPHAN_MIN get appended to the previous
+  const merged: string[] = [];
+  for (const part of result) {
+    if (merged.length > 0 && part.length < ORPHAN_MIN) {
+      merged[merged.length - 1] += ", " + part.charAt(0).toLowerCase() + part.slice(1);
+    } else {
+      merged.push(part);
+    }
+  }
+  return merged;
 }
 
 function BulletList({
@@ -521,9 +531,9 @@ export default function CompanyDetail() {
           </div>
 
           {/* Score row */}
-          <div className="flex items-center gap-3 mt-3">
+          <div className="flex items-center gap-2 mt-3 flex-wrap">
             {/* Verdict — filled pill */}
-            <span className={`text-sm font-extrabold px-4 py-1.5 rounded-xl border-2 border-current ${vc.bg} ${vc.text}`}>
+            <span className={`text-sm font-extrabold px-3 py-1.5 rounded-xl border-2 border-current ${vc.bg} ${vc.text}`}>
               {company.verdict.emoji} {company.verdict.label}
             </span>
             {/* Score — display number */}
@@ -535,17 +545,20 @@ export default function CompanyDetail() {
             </div>
             {/* Score delta */}
             {scoreDelta !== 0 && (
-              <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+              <span className={`text-xs font-bold px-2 py-1 rounded-full ${
                 scoreDelta > 0 ? "bg-signal-green-bg text-signal-green" : "bg-signal-red-bg text-signal-red"
               }`}>
                 {scoreDelta > 0 ? "▲" : "▼"} {Math.abs(scoreDelta).toFixed(1)} vs {company.previousQuarter}
               </span>
             )}
-            {/* Confidence */}
+            {/* Confidence — pushed to new line on mobile via flex-wrap */}
             {company.confidence.total > 0 && (
               <div className="flex items-center gap-1.5 ml-auto">
-                <span className="text-2xs font-semibold text-text-secondary">
+                <span className="text-2xs font-semibold text-text-secondary hidden sm:inline">
                   ✓ {company.confidence.display}
+                </span>
+                <span className="text-2xs font-semibold text-text-secondary sm:hidden">
+                  ✓ {company.confidence.verified}/{company.confidence.total} verified
                 </span>
               </div>
             )}
@@ -557,7 +570,7 @@ export default function CompanyDetail() {
 
         {/* Quarter selector */}
         {quarters.length > 1 && (
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             {quarters.map((q) => (
               <button key={q} onClick={() => switchQuarter(q)}
                 className={`text-xs font-bold px-4 py-1.5 rounded-full transition-all ${
@@ -570,6 +583,21 @@ export default function CompanyDetail() {
             ))}
           </div>
         )}
+
+        {/* Section nav — jump to key sections */}
+        <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
+          {[
+            { label: "Thesis",     id: "section-thesis"     },
+            { label: "Valuation",  id: "section-valuation"  },
+            { label: "Parameters", id: "section-params"     },
+            { label: "Risks",      id: "section-risks"      },
+          ].map(({ label, id }) => (
+            <a key={id} href={`#${id}`}
+              className="flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full bg-muted text-text-secondary hover:bg-border transition-colors">
+              {label}
+            </a>
+          ))}
+        </div>
 
         {/* 1 — Action summary + trust line */}
         {company.investorTake && (
@@ -645,12 +673,14 @@ export default function CompanyDetail() {
         )}
 
         {/* Valuation section */}
+        <div id="section-valuation">
         <ValuationSection
           valuationEstimate={valuationEstimate}
           marketCap={marketCap}
           quarter={activeQ}
           price={company.price}
         />
+        </div>
 
         {/* If you own this stock — actionable bullets only */}
         {company.investorTake && (() => {
@@ -694,7 +724,7 @@ export default function CompanyDetail() {
         </div>
 
         {/* 5 — Investment thesis */}
-        <section className="card-base p-5 space-y-4 border-t-2 border-signal-blue">
+        <section id="section-thesis" className="card-base p-5 space-y-4 border-t-2 border-signal-blue">
           <SectionHeader
             title="Investment thesis"
             accent="blue"
@@ -767,7 +797,7 @@ export default function CompanyDetail() {
         </section>
 
         {/* Parameter breakdown */}
-        <section className="space-y-3">
+        <section id="section-params" className="space-y-3">
           <SectionHeader title="Parameter breakdown" accent="neutral" />
           {params.map((p) => (
             <ParameterCard key={p.key} label={p.label} icon={p.icon} param={p.param}
@@ -777,19 +807,23 @@ export default function CompanyDetail() {
 
         {/* Risk factors */}
         {company.riskFactors.length > 0 && (
-          <section className="rounded-2xl p-5 bg-signal-red-bg border border-signal-red/20 space-y-3">
+          <section id="section-risks" className="rounded-2xl p-5 bg-signal-red-bg border border-signal-red/20 space-y-3">
             <SectionHeader title="Risk factors" accent="red" />
             {company.riskFactors.map((risk, i) => {
+              const borderColor =
+                risk.severity === "HIGH"   ? "border-signal-red" :
+                risk.severity === "MEDIUM" ? "border-signal-amber" :
+                                             "border-border";
               const sevColor =
-                risk.severity === "HIGH"   ? "bg-signal-red text-card" :
-                risk.severity === "MEDIUM" ? "bg-signal-amber text-card" :
-                                             "bg-muted text-text-secondary";
+                risk.severity === "HIGH"   ? "text-signal-red" :
+                risk.severity === "MEDIUM" ? "text-signal-amber" :
+                                             "text-text-muted";
               return (
-                <div key={i} className="flex items-start gap-2">
-                  <span className={`text-2xs font-bold px-1.5 py-0.5 rounded ${sevColor} flex-shrink-0 mt-0.5`}>
-                    {risk.severity}
-                  </span>
-                  <p className="text-xs text-text-secondary">{risk.description}</p>
+                <div key={i} className={`flex items-start gap-3 pl-3 border-l-2 ${borderColor}`}>
+                  <div className="flex-1">
+                    <span className={`text-2xs font-bold ${sevColor}`}>{risk.severity}</span>
+                    <p className="text-xs text-text-secondary mt-0.5">{risk.description}</p>
+                  </div>
                 </div>
               );
             })}
