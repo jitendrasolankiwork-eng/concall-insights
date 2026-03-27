@@ -554,7 +554,7 @@ export default function CompanyDetail() {
               <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
                 <span className="text-2xs text-text-muted font-medium">{company.ticker} · {activeQ}</span>
                 {company.investmentType && (
-                  <span className="text-2xs font-semibold px-1.5 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/20">
+                  <span className="hidden sm:inline text-2xs font-semibold px-1.5 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/20">
                     {company.investmentType}
                   </span>
                 )}
@@ -564,6 +564,11 @@ export default function CompanyDetail() {
               <p className={`text-sm font-bold ${priceColor}`}>
                 {company.price > 0 ? `₹${company.price.toLocaleString("en-IN")}` : "—"}
               </p>
+              {company.investmentType && (
+                <span className="sm:hidden text-2xs font-semibold px-1.5 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/20">
+                  {company.investmentType}
+                </span>
+              )}
             </div>
           </div>
 
@@ -884,13 +889,20 @@ export default function CompanyDetail() {
             title="Investment thesis"
             accent="blue"
             right={
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 text-2xs font-bold">
+              <div className="flex items-center gap-2">
+                {/* Desktop: full labels */}
+                <div className="hidden sm:flex items-center gap-2 text-2xs font-bold">
                   <span className="text-signal-green">{thesisYes} Confirmed</span>
                   <span className="text-text-muted">·</span>
                   <span className="text-signal-amber">{thesisPartial} Partial</span>
                   <span className="text-text-muted">·</span>
                   <span className="text-signal-red">{thesisNo} Not Passed</span>
+                </div>
+                {/* Mobile: compact icons */}
+                <div className="flex sm:hidden items-center gap-1.5 text-2xs font-bold">
+                  <span className="text-signal-green">{thesisYes}✓</span>
+                  <span className="text-signal-amber">{thesisPartial}~</span>
+                  <span className="text-signal-red">{thesisNo}✕</span>
                 </div>
                 <button onClick={() => setShowEvidence(!showEvidence)}
                   className="text-2xs font-semibold text-signal-blue hover:underline">

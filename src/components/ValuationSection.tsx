@@ -233,7 +233,7 @@ export default function ValuationSection({ valuationEstimate, marketCap, quarter
       <div>
         {/* Header row */}
         <div className="grid gap-3 pb-2 border-b border-border"
-          style={{ gridTemplateColumns: "130px minmax(0,1fr) minmax(0,1.4fr)" }}>
+          style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
           <div />
           <div className="text-2xs text-text-muted font-medium">Value</div>
           <div className="text-2xs text-text-muted font-medium">How we got here</div>
@@ -241,7 +241,7 @@ export default function ValuationSection({ valuationEstimate, marketCap, quarter
 
         {/* Revenue FY1 */}
         <div className="grid gap-3 py-2 border-b border-border/50"
-          style={{ gridTemplateColumns: "130px minmax(0,1fr) minmax(0,1.4fr)" }}>
+          style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
           <div className="text-xs text-text-secondary pt-0.5">{fy1} Revenue</div>
           <div className="text-xs font-semibold text-text-primary">{rev1.value}</div>
           <div className="text-2xs text-text-muted leading-relaxed">{rev1.note}</div>
@@ -250,7 +250,7 @@ export default function ValuationSection({ valuationEstimate, marketCap, quarter
         {/* Revenue FY2 — only show if available */}
         {rev2.value !== "—" && rev2.value !== "N/A" && (
           <div className="grid gap-3 py-2 border-b border-border/50"
-            style={{ gridTemplateColumns: "130px minmax(0,1fr) minmax(0,1.4fr)" }}>
+            style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
             <div className="text-xs text-text-secondary pt-0.5">{fy2} Revenue</div>
             <div className="text-xs font-semibold text-text-primary">{rev2.value}</div>
             <div className="text-2xs text-text-muted leading-relaxed">{rev2.note}</div>
@@ -259,7 +259,7 @@ export default function ValuationSection({ valuationEstimate, marketCap, quarter
 
         {/* PAT FY1 */}
         <div className="grid gap-3 py-2 border-b border-border/50"
-          style={{ gridTemplateColumns: "130px minmax(0,1fr) minmax(0,1.4fr)" }}>
+          style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
           <div className="text-xs text-text-secondary pt-0.5">{fy1} PAT</div>
           <div className="text-xs font-semibold text-text-primary">{pat1.value}</div>
           <div className="text-2xs text-text-muted leading-relaxed">{pat1.note}</div>
@@ -267,7 +267,7 @@ export default function ValuationSection({ valuationEstimate, marketCap, quarter
 
         {/* Forward PE */}
         <div className="grid gap-3 py-2 border-b border-border/50"
-          style={{ gridTemplateColumns: "130px minmax(0,1fr) minmax(0,1.4fr)" }}>
+          style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
           <div className="text-xs font-semibold text-text-primary pt-0.5">
             {isPreProfit ? `${fy2} Forward PE` : "Forward PE"}
           </div>
@@ -280,7 +280,7 @@ export default function ValuationSection({ valuationEstimate, marketCap, quarter
         {/* P/Sales — shown for pre-profit companies */}
         {isPreProfit && psRatio && (
           <div className="grid gap-3 py-2 border-b border-border/50"
-            style={{ gridTemplateColumns: "130px minmax(0,1fr) minmax(0,1.4fr)" }}>
+            style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
             <div className="text-xs font-semibold text-text-primary pt-0.5">{fy1} Price/Sales</div>
             <div className="text-xs font-bold text-signal-blue">{psRatio}</div>
             <div className="text-2xs text-text-muted leading-relaxed">
@@ -291,7 +291,7 @@ export default function ValuationSection({ valuationEstimate, marketCap, quarter
 
         {/* PEG */}
         <div className="grid gap-3 py-2"
-          style={{ gridTemplateColumns: "130px minmax(0,1fr) minmax(0,1.4fr)" }}>
+          style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
           <div className="text-xs font-semibold text-text-primary">PEG</div>
           {peg !== null ? (
             <>
