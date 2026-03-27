@@ -144,8 +144,12 @@ function ManagementToneCard({ tone, keyQuote, source, tc }: {
   tone: string; keyQuote?: string; source?: string;
   tc: { bg: string; dot: string; text: string };
 }) {
+  const LIMIT = 120;
   const [expanded, setExpanded] = useState(false);
-  const isLong = keyQuote && keyQuote.length > 160;
+  const isLong = keyQuote && keyQuote.length > LIMIT;
+  const displayQuote = isLong && !expanded
+    ? keyQuote!.slice(0, LIMIT).trimEnd() + "…"
+    : keyQuote;
   return (
     <div className={`rounded-lg p-3 ${tc.bg}`}>
       <div className="flex items-center gap-2 mb-1">
@@ -156,13 +160,11 @@ function ManagementToneCard({ tone, keyQuote, source, tc }: {
       </div>
       {keyQuote && (
         <div>
-          <p className={`text-xs italic text-text-secondary ${!expanded && isLong ? "line-clamp-2" : ""}`}>
-            "{keyQuote}"
-          </p>
+          <p className="text-xs italic text-text-secondary">"{displayQuote}"</p>
           {isLong && (
             <button
               onClick={() => setExpanded(!expanded)}
-              className={`text-2xs font-semibold mt-1 ${tc.text} hover:opacity-70 transition-opacity`}>
+              className={`text-2xs font-semibold mt-1.5 ${tc.text} hover:opacity-70 transition-opacity`}>
               {expanded ? "Show less ↑" : "Read more ↓"}
             </button>
           )}
