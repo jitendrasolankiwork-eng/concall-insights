@@ -139,6 +139,40 @@ function BulletList({
   );
 }
 
+// ── Management tone card with collapsible quote ───────────────────────────────
+function ManagementToneCard({ tone, keyQuote, source, tc }: {
+  tone: string; keyQuote?: string; source?: string;
+  tc: { bg: string; dot: string; text: string };
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = keyQuote && keyQuote.length > 160;
+  return (
+    <div className={`rounded-lg p-3 ${tc.bg}`}>
+      <div className="flex items-center gap-2 mb-1">
+        <span className={`w-2 h-2 rounded-full ${tc.dot}`} />
+        <span className={`text-xs font-semibold ${tc.text}`}>
+          Management tone: {tone.charAt(0).toUpperCase() + tone.slice(1)}
+        </span>
+      </div>
+      {keyQuote && (
+        <div>
+          <p className={`text-xs italic text-text-secondary ${!expanded && isLong ? "line-clamp-2" : ""}`}>
+            "{keyQuote}"
+          </p>
+          {isLong && (
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className={`text-2xs font-semibold mt-1 ${tc.text} hover:opacity-70 transition-opacity`}>
+              {expanded ? "Show less ↑" : "Read more ↓"}
+            </button>
+          )}
+        </div>
+      )}
+      {source && <p className="text-2xs text-text-muted mt-1">Source: {source}</p>}
+    </div>
+  );
+}
+
 // ── Section header with left accent bar ──────────────────────────────────────
 function SectionHeader({
   title, accent = "blue", right,
@@ -893,20 +927,12 @@ export default function CompanyDetail() {
           </div>
 
           {/* Management tone */}
-          <div className={`rounded-lg p-3 ${tc.bg}`}>
-            <div className="flex items-center gap-2 mb-1">
-              <span className={`w-2 h-2 rounded-full ${tc.dot}`} />
-              <span className={`text-xs font-semibold ${tc.text}`}>
-                Management tone: {company.managementTone.charAt(0).toUpperCase() + company.managementTone.slice(1)}
-              </span>
-            </div>
-            {company.thesis.managementTone.keyQuote && (
-              <p className="text-xs italic text-text-secondary">"{company.thesis.managementTone.keyQuote}"</p>
-            )}
-            {company.thesis.managementTone.source && (
-              <p className="text-2xs text-text-muted mt-1">Source: {company.thesis.managementTone.source}</p>
-            )}
-          </div>
+          <ManagementToneCard
+            tone={company.managementTone}
+            keyQuote={company.thesis.managementTone.keyQuote}
+            source={company.thesis.managementTone.source}
+            tc={tc}
+          />
         </section>
 
         {/* Analyst summary — what happened only */}
