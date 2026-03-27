@@ -435,6 +435,31 @@ export default function CompanyDetail() {
   const [marketCap,          setMarketCap]          = useState<number | null>(null);
   const [valuationEstimate,  setValuationEstimate]  = useState<any>(null);
 
+  // Live price state — polled independently every 60s
+  const [livePrice,      setLivePrice]      = useState<number | null>(null);
+  const [livePricePct,   setLivePricePct]   = useState<number | null>(null);
+  const [priceStale,     setPriceStale]     = useState(false);
+
+  useEffect(() => {
+    if (!sym) return;
+    const poll = async () => {
+      try {
+        const resp = await fetch(`/api/price/${sym.toUpperCase()}`);
+        const data = await resp.json();
+        if (data.success && data.price) {
+          setLivePrice(data.price);
+          setLivePricePct(data.changePct ?? 0);
+          setPriceStale(false);
+        }
+      } catch {
+        setPriceStale(true);
+      }
+    };
+    poll();
+    const id = setInterval(poll, 60_000);
+    return () => clearInterval(id);
+  }, [sym]);
+
   // Load latest on mount
   useEffect(() => {
     if (!sym) return;
@@ -522,7 +547,10 @@ export default function CompanyDetail() {
   const thesisPartial = thesisEntries.filter((e) => e.data.answer === "partial").length;
   const thesisNo      = thesisEntries.filter((e) => e.data.answer === "no").length;
 
-  const priceColor = company.priceChange >= 0 ? "text-signal-green" : "text-signal-red";
+  // Prefer live price over stale company.price
+  const displayPrice    = livePrice  ?? company.price;
+  const displayPricePct = livePricePct ?? company.priceChange;
+  const priceColor      = displayPricePct >= 0 ? "text-signal-green" : "text-signal-red";
 
   return (
     <div className="min-h-screen bg-background">
@@ -561,11 +589,26 @@ export default function CompanyDetail() {
               </div>
             </div>
             <div className="text-right flex-shrink-0">
-              <p className={`text-sm font-bold ${priceColor}`}>
-                {company.price > 0 ? `₹${company.price.toLocaleString("en-IN")}` : "—"}
-              </p>
+              {/* Price row with live indicator */}
+              <div className="flex items-center justify-end gap-1.5">
+                {livePrice && !priceStale && (
+                  <span className="relative flex h-1.5 w-1.5 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-signal-green opacity-60" />
+                    <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-signal-green" />
+                  </span>
+                )}
+                <p className={`text-sm font-bold ${priceColor}`}>
+                  {displayPrice > 0 ? `₹${displayPrice.toLocaleString("en-IN")}` : "—"}
+                </p>
+              </div>
+              {/* % change */}
+              {displayPrice > 0 && (
+                <p className={`text-2xs font-medium ${priceColor}`}>
+                  {displayPricePct >= 0 ? "▲" : "▼"} {Math.abs(displayPricePct).toFixed(2)}%
+                </p>
+              )}
               {company.investmentType && (
-                <span className="sm:hidden text-2xs font-semibold px-1.5 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/20">
+                <span className="sm:hidden text-2xs font-semibold px-1.5 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/20 mt-0.5 inline-block">
                   {company.investmentType}
                 </span>
               )}
