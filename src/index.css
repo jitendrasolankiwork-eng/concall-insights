@@ -67,3 +67,18 @@
     transform: translateY(-1px);
   }
 }
+
+/* ── Market ticker marquee ───────────────────────────────────────────────── */
+@keyframes market-ticker {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.market-ticker-track {
+  animation: market-ticker 40s linear infinite;
+  width: max-content;
+  display: flex;
+  align-items: center;
+}
+.market-ticker-track:hover {
+  animation-play-state: paused;
+}

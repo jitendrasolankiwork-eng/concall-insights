@@ -4,12 +4,14 @@ import Dashboard from "./pages/Dashboard";
 import CompanyDetail from "./pages/CompanyDetail";
 import Admin from "./pages/Admin";
 import NotFound from "./pages/NotFound";
+import MarketTicker from "./components/MarketTicker";
 
 const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <BrowserRouter>
+      <MarketTicker />
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/company/:ticker" element={<CompanyDetail />} />
