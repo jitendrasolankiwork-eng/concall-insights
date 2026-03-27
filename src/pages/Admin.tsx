@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import {
   fetchAllPrompts, savePrompt, resetPrompt,
   fetchSheetRows, addSheetRow, updateSheetRow, deleteSheetRow, processSymbol,
-  fetchWriterSetup,
+  fetchWriterSetup, bseLookup, bseFilings,
   type SheetRowInput,
 } from "@/lib/api";
 
@@ -196,6 +196,48 @@ function EditPanel({
   const [msg,        setMsg]        = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [processMsg, setProcessMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
+  // BSE auto-discovery state
+  const [bseLooking,  setBseLooking]  = useState(false);
+  const [bseCode,     setBseCode]     = useState<string | null>(null);
+  const [bseFilingList, setBseFilingList] = useState<{ type: string; title: string; date: string; url: string }[]>([]);
+  const [bseMsg,      setBseMsg]      = useState<string | null>(null);
+
+  const handleBseLookup = async () => {
+    if (!form.symbol) return;
+    setBseLooking(true);
+    setBseMsg(null);
+    setBseFilingList([]);
+    setBseCode(null);
+    try {
+      // Step 1: lookup company name + market cap + BSE code
+      const lookup = await bseLookup(form.symbol);
+      if (lookup.companyName && !form.companyName) set("companyName", lookup.companyName);
+      if (lookup.marketCap   && !form.marketCap)   set("marketCap",   String(lookup.marketCap));
+
+      const code = lookup.bseCode;
+      if (code) {
+        setBseCode(code);
+        // Step 2: fetch filings
+        const filingsResp = await bseFilings(code);
+        const list = filingsResp.filings || [];
+        setBseFilingList(list);
+        setBseMsg(list.length > 0
+          ? `Found ${list.length} filing${list.length > 1 ? "s" : ""} — click to use`
+          : "No recent concall/PPT filings found on BSE"
+        );
+      } else {
+        setBseMsg(lookup.companyName
+          ? "Auto-filled company name — BSE code not found, enter PDF URLs manually"
+          : "Company not found. Check ticker and try again."
+        );
+      }
+    } catch (e: any) {
+      setBseMsg("BSE lookup failed — enter details manually");
+    } finally {
+      setBseLooking(false);
+    }
+  };
+
   // Reset when row/mode changes
   useEffect(() => {
     setForm(row ? rowToForm(row) : EMPTY_FORM);
@@ -279,21 +321,37 @@ function EditPanel({
 
       {/* Fields — scrollable */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-        {/* Symbol + Company Name */}
+        {/* Symbol + Auto-fill */}
         <div>
           <label className={labelCls}>NSE Ticker *</label>
-          <input value={form.symbol}
-            onChange={(e) => set("symbol", e.target.value.toUpperCase())}
-            placeholder="e.g. MANORAMA"
-            className={inputCls}
-            required
-          />
+          <div className="flex gap-2">
+            <input value={form.symbol}
+              onChange={(e) => { set("symbol", e.target.value.toUpperCase()); setBseMsg(null); setBseFilingList([]); }}
+              placeholder="e.g. V2RETAIL"
+              className={`${inputCls} flex-1`}
+              required
+            />
+            <button type="button" onClick={handleBseLookup}
+              disabled={!form.symbol || bseLooking}
+              title="Auto-fill from BSE"
+              className="px-3 py-2 rounded-lg text-xs font-semibold bg-signal-blue-bg text-signal-blue border border-signal-blue/30 hover:bg-signal-blue hover:text-card transition-all disabled:opacity-40 flex-shrink-0 flex items-center gap-1">
+              {bseLooking
+                ? <span className="w-3 h-3 border-2 border-signal-blue/40 border-t-signal-blue rounded-full animate-spin" />
+                : "🔍"}
+            </button>
+          </div>
+          {/* BSE lookup feedback */}
+          {bseMsg && (
+            <p className={`text-2xs mt-1.5 ${bseFilingList.length > 0 ? "text-signal-green" : "text-text-muted"}`}>
+              {bseCode && <span className="font-semibold">BSE {bseCode} · </span>}{bseMsg}
+            </p>
+          )}
         </div>
         <div>
           <label className={labelCls}>Company Name</label>
           <input value={form.companyName}
             onChange={(e) => set("companyName", e.target.value)}
-            placeholder="e.g. Manorama Industries Limited"
+            placeholder="Auto-filled or enter manually"
             className={inputCls}
           />
         </div>
@@ -309,30 +367,50 @@ function EditPanel({
           />
         </div>
 
-        {/* URLs */}
+        {/* URLs with BSE filing suggestions */}
         <div>
           <label className={labelCls}>Concall PDF URL <span className="font-normal normal-case text-text-muted">(BSE)</span></label>
           <input value={form.concallUrl}
             onChange={(e) => set("concallUrl", e.target.value)}
-            placeholder="https://www.bseindia.com/..."
+            placeholder={bseFilingList.length > 0 ? "Click a suggestion below ↓" : "https://www.bseindia.com/..."}
             className={inputCls}
           />
+          {/* Concall suggestions */}
+          {bseFilingList.filter(f => f.type === "concall").slice(0, 3).map((f, i) => (
+            <button key={i} type="button"
+              onClick={() => set("concallUrl", f.url)}
+              className="mt-1 w-full text-left px-2 py-1.5 rounded-lg bg-muted hover:bg-signal-blue-bg border border-border hover:border-signal-blue/30 transition-all group">
+              <span className="text-2xs font-semibold text-signal-blue group-hover:text-signal-blue">📄 </span>
+              <span className="text-2xs text-text-secondary">{f.title.slice(0, 55)}{f.title.length > 55 ? "…" : ""}</span>
+              <span className="text-2xs text-text-muted ml-1">· {f.date}</span>
+            </button>
+          ))}
         </div>
         <div>
           <label className={labelCls}>Investor PPT URL <span className="font-normal normal-case text-text-muted">(optional)</span></label>
           <input value={form.pptUrl}
             onChange={(e) => set("pptUrl", e.target.value)}
-            placeholder="https://www.bseindia.com/..."
+            placeholder={bseFilingList.length > 0 ? "Click a suggestion below ↓" : "https://www.bseindia.com/..."}
             className={inputCls}
           />
+          {/* PPT suggestions */}
+          {bseFilingList.filter(f => f.type === "ppt").slice(0, 3).map((f, i) => (
+            <button key={i} type="button"
+              onClick={() => set("pptUrl", f.url)}
+              className="mt-1 w-full text-left px-2 py-1.5 rounded-lg bg-muted hover:bg-signal-blue-bg border border-border hover:border-signal-blue/30 transition-all group">
+              <span className="text-2xs font-semibold text-signal-blue">📊 </span>
+              <span className="text-2xs text-text-secondary">{f.title.slice(0, 55)}{f.title.length > 55 ? "…" : ""}</span>
+              <span className="text-2xs text-text-muted ml-1">· {f.date}</span>
+            </button>
+          ))}
         </div>
 
-        {/* Market Cap */}
+        {/* Market Cap — auto-filled from Yahoo */}
         <div>
-          <label className={labelCls}>Market Cap <span className="font-normal normal-case text-text-muted">(₹ Crores)</span></label>
+          <label className={labelCls}>Market Cap <span className="font-normal normal-case text-text-muted">(₹ Crores — auto-filled)</span></label>
           <input value={form.marketCap}
             onChange={(e) => set("marketCap", e.target.value)}
-            placeholder="e.g. 7203"
+            placeholder="Auto-filled on 🔍 lookup"
             type="number"
             className={inputCls}
           />
