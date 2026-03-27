@@ -392,8 +392,9 @@ export default function CompanyDetail() {
   const [error,      setError]      = useState("");
   const [quarters,   setQuarters]   = useState<string[]>([]);
   const [activeQ,    setActiveQ]    = useState<string>("");
-  const [showEvidence, setShowEvidence] = useState(false);
-  const [showModal,    setShowModal]    = useState(false);
+  const [showEvidence,   setShowEvidence]   = useState(false);
+  const [showModal,      setShowModal]      = useState(false);
+  const [audience,       setAudience]       = useState<"own"|"considering"|"tracking">("own");
   const [valuation,          setValuation]          = useState<any>(null);
   const [marketCap,          setMarketCap]          = useState<number | null>(null);
   const [valuationEstimate,  setValuationEstimate]  = useState<any>(null);
@@ -682,32 +683,150 @@ export default function CompanyDetail() {
         />
         </div>
 
-        {/* If you own this stock — actionable bullets only */}
-        {company.investorTake && (() => {
-          const ACTION_KW = ["accumulate", "hold", "buy", "sell", "monitor", "consider", "avoid", "exit", "reduce", "maintain", "watch", "wait", "chase", "trim", "book", "add", "stay", "invest", "keep"];
-          const allBullets   = splitIntoBullets(company.investorTake);
-          const actionBullets = allBullets.filter((s) => ACTION_KW.some((kw) => s.toLowerCase().includes(kw)));
-          const bullets = actionBullets.length > 0 ? actionBullets : allBullets;
-          return (
-            <div className="card-base p-5 border-t-2 border-signal-blue">
-              <SectionHeader title="If you own this stock" accent="blue" />
-              <div className="mt-3 space-y-1.5">
-                {bullets.map((s, i) => {
-                  const isWarning  = /monitor|watch|risk|decline|avoid|don.t chase/i.test(s);
-                  const isPositive = /accumulate|maintain|hold|add|invest|keep/i.test(s);
-                  const icon  = isWarning ? "⚠" : isPositive ? "✓" : "→";
-                  const color = isWarning ? "text-signal-amber" : isPositive ? "text-signal-green" : "text-text-secondary";
+        {/* Action box — 3 audiences */}
+        <div className="card-base border-t-2 border-signal-blue overflow-hidden">
+          {/* Tab switcher */}
+          <div className="flex border-b border-border">
+            {(["own","considering","tracking"] as const).map((tab) => {
+              const labels = { own: "I Own It", considering: "Considering", tracking: "Tracking" };
+              return (
+                <button key={tab} onClick={() => setAudience(tab)}
+                  className={`flex-1 text-xs font-bold py-3 transition-colors ${
+                    audience === tab
+                      ? "text-signal-blue border-b-2 border-signal-blue bg-signal-blue-bg/40"
+                      : "text-text-muted hover:text-text-secondary"
+                  }`}>
+                  {labels[tab]}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="p-5 space-y-2">
+
+            {/* TAB 1 — I Own It */}
+            {audience === "own" && (() => {
+              const ACTION_KW = ["accumulate","hold","buy","sell","monitor","consider","avoid","exit","reduce","maintain","watch","wait","chase","trim","book","add","stay","invest","keep"];
+              const allBullets    = splitIntoBullets(company.investorTake || "");
+              const actionBullets = allBullets.filter((s) => ACTION_KW.some((kw) => s.toLowerCase().includes(kw)));
+              const bullets = actionBullets.length > 0 ? actionBullets : allBullets;
+              return bullets.map((s, i) => {
+                const isWarning  = /monitor|watch|risk|decline|avoid|don.t chase/i.test(s);
+                const isPositive = /accumulate|maintain|hold|add|invest|keep/i.test(s);
+                const icon  = isWarning ? "⚠" : isPositive ? "✓" : "▸";
+                const color = isWarning ? "text-signal-amber" : isPositive ? "text-signal-green" : "text-text-secondary";
+                return (
+                  <div key={i} className="flex items-start gap-2">
+                    <span className={`text-xs font-bold mt-0.5 flex-shrink-0 ${color}`}>{icon}</span>
+                    <p className={`text-xs leading-relaxed ${color}`}>{s}</p>
+                  </div>
+                );
+              });
+            })()}
+
+            {/* TAB 2 — Considering */}
+            {audience === "considering" && (
+              <>
+                {/* Thesis summary */}
+                <div className="flex items-center gap-2 pb-2 border-b border-border">
+                  <span className="text-xs font-semibold text-text-secondary">Thesis check:</span>
+                  <span className="text-xs font-bold text-signal-green">{thesisYes} confirmed</span>
+                  {thesisPartial > 0 && <span className="text-xs font-bold text-signal-amber">{thesisPartial} partial</span>}
+                  {thesisNo > 0 && <span className="text-xs font-bold text-signal-red">{thesisNo} not passed</span>}
+                  <span className="text-xs text-text-muted ml-auto">out of 6</span>
+                </div>
+
+                {/* What's confirmed */}
+                {thesisEntries.filter(e => e.data.answer === "yes").map((e) => (
+                  <div key={e.key} className="flex items-start gap-2">
+                    <span className="text-xs font-bold text-signal-green flex-shrink-0 mt-0.5">✓</span>
+                    <p className="text-xs text-signal-green">{e.label}</p>
+                  </div>
+                ))}
+
+                {/* What's still partial/missing */}
+                {thesisEntries.filter(e => e.data.answer === "partial" || e.data.answer === "no").map((e) => (
+                  <div key={e.key} className="flex items-start gap-2">
+                    <span className={`text-xs font-bold flex-shrink-0 mt-0.5 ${e.data.answer === "no" ? "text-signal-red" : "text-signal-amber"}`}>
+                      {e.data.answer === "no" ? "✕" : "~"}
+                    </span>
+                    <div>
+                      <p className={`text-xs font-semibold ${e.data.answer === "no" ? "text-signal-red" : "text-signal-amber"}`}>{e.label}</p>
+                      {e.data.summary && (
+                        <p className="text-2xs text-text-muted mt-0.5 leading-relaxed">
+                          {splitIntoBullets(e.data.summary)[0]}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Top risk to know before buying */}
+                {company.riskFactors.filter((r: any) => r.severity === "HIGH").slice(0,1).map((r: any, i: number) => (
+                  <div key={i} className="flex items-start gap-2 mt-1 pt-2 border-t border-border">
+                    <span className="text-xs font-bold text-signal-red flex-shrink-0 mt-0.5">⚠</span>
+                    <p className="text-xs text-signal-red leading-relaxed">{r.description}</p>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {/* TAB 3 — Tracking */}
+            {audience === "tracking" && (
+              <>
+                {/* Score trend */}
+                {company.previousQuarter && (
+                  <div className="flex items-center gap-2 pb-2 border-b border-border">
+                    <span className="text-xs text-text-secondary font-semibold">Score trend:</span>
+                    <span className={`text-xs font-bold ${scoreDelta > 0 ? "text-signal-green" : scoreDelta < 0 ? "text-signal-red" : "text-text-muted"}`}>
+                      {scoreDelta > 0 ? `▲ +${scoreDelta.toFixed(1)}` : scoreDelta < 0 ? `▼ ${scoreDelta.toFixed(1)}` : "→ Unchanged"}
+                    </span>
+                    <span className="text-2xs text-text-muted">vs {company.previousQuarter}</span>
+                  </div>
+                )}
+
+                {/* Parameters that changed */}
+                {changedParams.length > 0 && changedParams.map((p) => {
+                  const improved = p.param.score > (p.param.previousScore || 0);
                   return (
-                    <div key={i} className="flex items-start gap-2">
-                      <span className={`text-xs font-semibold mt-0.5 ${color}`}>{icon}</span>
-                      <p className={`text-xs leading-relaxed ${color}`}>{s}</p>
+                    <div key={p.key} className="flex items-start gap-2">
+                      <span className={`text-xs font-bold mt-0.5 flex-shrink-0 ${improved ? "text-signal-green" : "text-signal-red"}`}>
+                        {improved ? "▲" : "▼"}
+                      </span>
+                      <p className={`text-xs ${improved ? "text-signal-green" : "text-signal-red"}`}>
+                        {p.label} {improved ? "improved" : "eased"} ({p.param.previousScore}→{p.param.score})
+                      </p>
                     </div>
                   );
                 })}
-              </div>
-            </div>
-          );
-        })()}
+
+                {/* Partial thesis — what to watch for */}
+                {thesisEntries.filter(e => e.data.answer === "partial").length > 0 && (
+                  <div className="pt-2 border-t border-border">
+                    <p className="text-2xs font-bold text-text-muted uppercase tracking-wider mb-1.5">Watch for these to confirm</p>
+                    {thesisEntries.filter(e => e.data.answer === "partial").map((e) => (
+                      <div key={e.key} className="flex items-start gap-2 mb-1">
+                        <span className="text-xs text-signal-amber font-bold flex-shrink-0 mt-0.5">~</span>
+                        <p className="text-xs text-text-secondary">{e.label}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Key risks to monitor */}
+                {company.riskFactors.filter((r: any) => r.severity === "HIGH" || r.severity === "MEDIUM").slice(0,3).map((r: any, i: number) => (
+                  <div key={i} className={`flex items-start gap-2 ${i === 0 ? "pt-2 border-t border-border" : ""}`}>
+                    <span className={`text-2xs font-bold px-1 py-0.5 rounded flex-shrink-0 mt-0.5 ${
+                      r.severity === "HIGH" ? "bg-signal-red text-card" : "bg-signal-amber text-card"
+                    }`}>{r.severity}</span>
+                    <p className="text-xs text-text-secondary leading-relaxed">{r.description}</p>
+                  </div>
+                ))}
+              </>
+            )}
+
+          </div>
+        </div>
 
         {/* 4 — Summary strip */}
         <div className={`rounded-2xl p-4 space-y-2.5 border border-current/20 ${vc.bg}`}>
