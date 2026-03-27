@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import CompanyCard from "@/components/CompanyCard";
+import ThemeToggle from "@/components/ThemeToggle";
 import { fetchCompany } from "@/lib/api";
 import type { CompanyInsight } from "@/types/portfolio";
 
@@ -249,9 +250,12 @@ export default function Dashboard() {
               </button>
             </p>
           </div>
-          <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-muted text-text-secondary">
-            {loading ? "…" : `${filtered.length} companies`}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-muted text-text-secondary">
+              {loading ? "…" : `${filtered.length} companies`}
+            </span>
+            <ThemeToggle />
+          </div>
         </div>
       </header>
 

@@ -2,6 +2,7 @@ import { useParams, Link } from "react-router-dom";
 import { useState, useEffect, type ReactNode } from "react";
 import { fetchCompany, fetchCompanyByQuarter, fetchAvailableQuarters } from "@/lib/api";
 import ValuationSection from "@/components/ValuationSection";
+import ThemeToggle from "@/components/ThemeToggle";
 import { CompanyInsight, Parameter } from "@/types/portfolio";
 
 // ── Color helpers ──────────────────────────────────────────────────────────────
@@ -638,7 +639,7 @@ export default function CompanyDetail() {
             )}
             {/* Confidence — pushed to new line on mobile via flex-wrap */}
             {company.confidence.total > 0 && (
-              <div className="flex items-center gap-1.5 ml-auto">
+              <div className="flex items-center gap-1.5">
                 <span className="text-2xs font-semibold text-text-secondary hidden sm:inline">
                   ✓ {company.confidence.display}
                 </span>
@@ -647,6 +648,9 @@ export default function CompanyDetail() {
                 </span>
               </div>
             )}
+            <div className="ml-auto">
+              <ThemeToggle />
+            </div>
           </div>
         </div>
       </header>
