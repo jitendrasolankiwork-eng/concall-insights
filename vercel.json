@@ -3,6 +3,10 @@
     {
       "source": "/api/:path*",
       "destination": "https://portfolio-tracker-backend-pi.vercel.app/api/:path*"
+    },
+    {
+      "source": "/((?!api).*)",
+      "destination": "/index.html"
     }
   ]
 }
