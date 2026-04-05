@@ -1,9 +1,15 @@
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useSearchParams } from "react-router-dom";
 import { useState, useEffect, type ReactNode } from "react";
 import { fetchCompany, fetchCompanyByQuarter, fetchAvailableQuarters } from "@/lib/api";
 import ValuationSection from "@/components/ValuationSection";
 import ThemeToggle from "@/components/ThemeToggle";
+import { FundamentalsTab }   from "@/components/FundamentalsTab";
+import { KeyRatiosTab }      from "@/components/KeyRatiosTab";
+import { ShareholdingTab }   from "@/components/ShareholdingTab";
+import { AnnouncementsTab }  from "@/components/AnnouncementsTab";
 import { CompanyInsight, Parameter } from "@/types/portfolio";
+
+type ActiveTab = "insights" | "fundamentals" | "ratios" | "shareholding" | "announcements";
 
 // ── Color helpers ──────────────────────────────────────────────────────────────
 function ScoreColor(score: number) {
@@ -423,6 +429,10 @@ function HowScoresModal({ onClose }: { onClose: () => void }) {
 export default function CompanyDetail() {
   const { ticker } = useParams<{ ticker: string }>();
   const sym = ticker?.toUpperCase() || "";
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = (searchParams.get("tab") || "insights") as ActiveTab;
+  const setTab = (tab: ActiveTab) =>
+    setSearchParams(tab === "insights" ? {} : { tab }, { replace: true });
 
   const [company,    setCompany]    = useState<CompanyInsight | null>(null);
   const [loading,    setLoading]    = useState(true);
@@ -558,107 +568,98 @@ export default function CompanyDetail() {
 
       {/* Sticky header */}
       <header className="sticky top-0 z-10 bg-card border-b border-border shadow-sm">
-        <div className="container py-3.5">
-          <div className="flex items-center gap-3">
-            <Link to="/" className="text-text-muted hover:text-text-primary transition-colors text-base leading-none">←</Link>
-            <div className="w-10 h-10 rounded-xl overflow-hidden bg-muted flex items-center justify-center flex-shrink-0 border border-border">
-              {["zomato","hdfc-bank","polycab"].includes(company.slug) ? (
-                <img
-                  src={`https://s3-symbol-logo.tradingview.com/${company.slug}--big.svg`}
-                  alt={company.company}
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
-              ) : (
-                <span className="text-sm font-bold text-text-secondary">
-                  {company.company.charAt(0).toUpperCase()}
-                </span>
-              )}
+        <div className="container py-3">
+
+          {/* Row 1: Back + name + price */}
+          <div className="flex items-start gap-3">
+            <Link to="/" className="text-text-muted hover:text-text-primary transition-colors text-lg leading-none mt-0.5 flex-shrink-0">←</Link>
+
+            {/* Logo */}
+            <div className="w-9 h-9 rounded-xl overflow-hidden bg-muted flex items-center justify-center flex-shrink-0 border border-border">
+              <img
+                src={`https://s3-symbol-logo.tradingview.com/${company.slug}--big.svg`}
+                alt={company.company}
+                className="w-full h-full object-cover"
+                referrerPolicy="no-referrer"
+                onError={(e) => {
+                  const el = e.target as HTMLImageElement;
+                  el.style.display = "none";
+                  el.nextElementSibling?.removeAttribute("style");
+                }}
+              />
+              <span className="text-sm font-bold text-text-secondary" style={{ display: "none" }}>
+                {company.company.charAt(0).toUpperCase()}
+              </span>
             </div>
+
+            {/* Name + meta */}
             <div className="flex-1 min-w-0">
-              <h1 className="text-base font-extrabold text-text-primary truncate tracking-tight leading-tight">
+              <h1 className="text-sm font-extrabold text-text-primary truncate tracking-tight leading-snug">
                 {company.company}
               </h1>
               <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
                 <span className="text-2xs text-text-muted font-medium">{company.ticker} · {activeQ}</span>
                 {company.investmentType && (
-                  <span className="hidden sm:inline text-2xs font-semibold px-1.5 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/20">
+                  <span className="text-2xs font-semibold px-1.5 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/20">
                     {company.investmentType}
                   </span>
                 )}
               </div>
             </div>
+
+            {/* Price */}
             <div className="text-right flex-shrink-0">
-              {/* Price row with live indicator */}
-              <div className="flex items-center justify-end gap-1.5">
+              <div className="flex items-center justify-end gap-1">
                 {livePrice && !priceStale && (
                   <span className="relative flex h-1.5 w-1.5 shrink-0">
                     <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-signal-green opacity-60" />
                     <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-signal-green" />
                   </span>
                 )}
-                <p className={`text-sm font-bold ${priceColor}`}>
+                <p className={`text-base font-extrabold ${priceColor}`}>
                   {displayPrice > 0 ? `₹${displayPrice.toLocaleString("en-IN")}` : "—"}
                 </p>
               </div>
-              {/* % change */}
               {displayPrice > 0 && (
-                <p className={`text-2xs font-medium ${priceColor}`}>
-                  {displayPricePct >= 0 ? "▲" : "▼"} {Math.abs(displayPricePct).toFixed(2)}%
+                <p className={`text-xs font-semibold ${priceColor}`}>
+                  {displayPricePct >= 0 ? "+" : ""}{displayPricePct.toFixed(2)}%
                 </p>
               )}
-              {company.investmentType && (
-                <span className="sm:hidden text-2xs font-semibold px-1.5 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/20 mt-0.5 inline-block">
-                  {company.investmentType}
-                </span>
-              )}
+              <div className="mt-0.5"><ThemeToggle /></div>
             </div>
           </div>
 
-          {/* Score row */}
-          <div className="flex items-center gap-2 mt-3 flex-wrap">
-            {/* Verdict — filled pill */}
-            <span className={`text-sm font-extrabold px-3 py-1.5 rounded-xl border-2 border-current ${vc.bg} ${vc.text}`}>
+          {/* Row 2: Verdict + score + delta + confidence */}
+          <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+            <span className={`text-xs font-extrabold px-2.5 py-1 rounded-lg border border-current ${vc.bg} ${vc.text}`}>
               {company.verdict.emoji} {company.verdict.label}
             </span>
-            {/* Score — display number */}
-            <div className="flex items-baseline gap-1">
-              <span className={`text-3xl font-black leading-none ${ScoreColor(company.compositeScore).text}`}>
+            <div className="flex items-baseline gap-0.5">
+              <span className={`text-2xl font-black leading-none ${ScoreColor(company.compositeScore).text}`}>
                 {company.compositeScore.toFixed(1)}
               </span>
               <span className="text-xs font-semibold text-text-muted">/5</span>
             </div>
-            {/* Score delta */}
             {scoreDelta !== 0 && (
-              <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
                 scoreDelta > 0 ? "bg-signal-green-bg text-signal-green" : "bg-signal-red-bg text-signal-red"
               }`}>
                 {scoreDelta > 0 ? "▲" : "▼"} {Math.abs(scoreDelta).toFixed(1)} vs {company.previousQuarter}
               </span>
             )}
-            {/* Confidence — pushed to new line on mobile via flex-wrap */}
             {company.confidence.total > 0 && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-2xs font-semibold text-text-secondary hidden sm:inline">
-                  ✓ {company.confidence.display}
-                </span>
-                <span className="text-2xs font-semibold text-text-secondary sm:hidden">
-                  ✓ {company.confidence.verified}/{company.confidence.total} verified
-                </span>
-              </div>
+              <span className="text-2xs font-semibold text-text-secondary">
+                ✓ {company.confidence.display}
+              </span>
             )}
-            <div className="ml-auto">
-              <ThemeToggle />
-            </div>
           </div>
         </div>
       </header>
 
-      <main className="container py-6 space-y-6">
+      <main className="container py-4 space-y-4">
 
-        {/* Quarter selector */}
-        {quarters.length > 1 && (
+        {/* Quarter selector — only show on Insights tab */}
+        {quarters.length > 1 && activeTab === "insights" && (
           <div className="flex gap-2 flex-wrap">
             {quarters.map((q) => (
               <button key={q} onClick={() => switchQuarter(q)}
@@ -672,6 +673,35 @@ export default function CompanyDetail() {
             ))}
           </div>
         )}
+
+        {/* ── Tab strip ── */}
+        <div className="flex gap-0.5 border-b border-border overflow-x-auto" style={{ scrollbarWidth: "none" }}>
+          {([
+            { key: "insights",      label: "Insights"      },
+            { key: "fundamentals",  label: "Fundamentals"  },
+            { key: "ratios",        label: "Key ratios"    },
+            { key: "shareholding",  label: "Shareholding"  },
+            { key: "announcements", label: "Announcements" },
+          ] as { key: ActiveTab; label: string }[]).map((t) => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={`px-4 py-2.5 text-xs font-semibold whitespace-nowrap transition-all border-b-2 -mb-px ${
+                activeTab === t.key
+                  ? "border-foreground text-text-primary"
+                  : "border-transparent text-text-muted hover:text-text-secondary"
+              }`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Non-Insights tabs ── */}
+        {activeTab === "fundamentals"  && <FundamentalsTab  symbol={sym} visible company={company} />}
+        {activeTab === "ratios"        && <KeyRatiosTab     symbol={sym} visible valuationEstimate={valuationEstimate} currentPrice={livePrice ?? company.price} />}
+        {activeTab === "shareholding"  && <ShareholdingTab  symbol={sym} visible />}
+        {activeTab === "announcements" && <AnnouncementsTab symbol={sym} visible />}
+
+        {/* ── Insights tab content — Section nav + all existing sections ── */}
+        {activeTab === "insights" && <>
 
         {/* Section nav — jump to key sections */}
         <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
@@ -688,12 +718,39 @@ export default function CompanyDetail() {
           ))}
         </div>
 
-        {/* 1 — Action summary + trust line */}
+        {/* 1 — All three signals */}
         {company.investorTake && (
           <div className={`rounded-2xl px-5 py-4 border-l-4 border-current ${vc.bg} ${vc.text}`}>
             <p className={`text-sm font-bold leading-relaxed ${vc.text}`}>
               {company.verdict.emoji} {splitIntoBullets(company.investorTake)[0] || company.investorTake}
             </p>
+            {/* 3 signal pills + management tone */}
+            <div className="flex items-center gap-2 mt-3 flex-wrap">
+              {[
+                { icon: "🏗️", label: "Capex",   score: company.parameters.capex.score },
+                { icon: "📈", label: "Revenue",  score: company.parameters.revenueGrowth.score },
+                { icon: "📊", label: "Margins",  score: company.parameters.marginOutlook.score },
+              ].map((sig) => (
+                <div key={sig.label} className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-card/70 border border-current/20 text-xs">
+                  <span>{sig.icon}</span>
+                  <span className="font-semibold text-text-primary">{sig.label}</span>
+                  <span className={`font-extrabold ${ScoreColor(sig.score).text}`}>{sig.score}/5</span>
+                </div>
+              ))}
+              {/* Management tone pill */}
+              {company.managementTone && (
+                <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-card/70 border border-current/20 text-xs">
+                  <span className="font-semibold text-text-primary">Management Tone —</span>
+                  <span className={`font-extrabold ${
+                    company.managementTone === "confident" ? "text-signal-green"
+                    : company.managementTone === "cautious" ? "text-signal-amber"
+                    : "text-signal-red"
+                  }`}>
+                    {company.managementTone.charAt(0).toUpperCase() + company.managementTone.slice(1)}
+                  </span>
+                </div>
+              )}
+            </div>
             {company.confidence.verified > 0 && (
               <p className="text-2xs text-text-muted mt-2.5 font-medium">
                 ✓ Based on {company.confidence.verified} verified management statement{company.confidence.verified !== 1 ? "s" : ""} · {company.quarter}
@@ -702,7 +759,7 @@ export default function CompanyDetail() {
           </div>
         )}
 
-        {/* 2 — Red flags (Change 3, only shown when triggered) */}
+        {/* Red flags — only shown when triggered */}
         {(() => {
           const flags = detectRedFlags(company);
           if (!flags.length) return null;
@@ -719,12 +776,25 @@ export default function CompanyDetail() {
           );
         })()}
 
+        {/* 2 — BUY / score card */}
+        <div className={`rounded-2xl p-4 space-y-2.5 border border-current/20 ${vc.bg}`}>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <span className={`text-sm font-extrabold ${vc.text}`}>{company.verdict.emoji} {company.verdict.label}</span>
+            <span className={`text-sm font-extrabold ${vc.text}`}>{company.compositeScore.toFixed(1)}/5</span>
+            {company.confidence.total > 0 && (
+              <span className="text-2xs font-semibold px-2 py-0.5 rounded-full ml-auto bg-card/60 text-text-secondary border border-border">
+                ✓ {company.confidence.display}
+              </span>
+            )}
+          </div>
+          <BulletList text={company.overallSummary} textClass="text-xs text-text-secondary" />
+        </div>
 
-        {/* What changed this quarter */}
+        {/* 3 — How score has changed with previous quarter */}
         {company.previousQuarter && (changedParams.length > 0 || stableParams.length > 0) && (
           <section className="card-base p-5 space-y-3 border-t-2 border-signal-amber">
             <SectionHeader
-              title="What changed this quarter"
+              title="How score has changed with previous quarter"
               accent="amber"
               right={<span className="text-2xs text-text-muted font-medium">{company.previousQuarter} → {activeQ}</span>}
             />
@@ -761,15 +831,77 @@ export default function CompanyDetail() {
           </section>
         )}
 
-        {/* Valuation section */}
-        <div id="section-valuation">
-        <ValuationSection
-          valuationEstimate={valuationEstimate}
-          marketCap={marketCap}
-          quarter={activeQ}
-          price={company.price}
-        />
-        </div>
+        {/* 4 — Investment thesis */}
+        <section id="section-thesis" className="card-base p-5 space-y-4 border-t-2 border-signal-blue">
+          <SectionHeader
+            title="Investment thesis"
+            accent="blue"
+            right={
+              <div className="flex items-center gap-2">
+                {/* Desktop: full labels */}
+                <div className="hidden sm:flex items-center gap-2 text-2xs font-bold">
+                  <span className="text-signal-green">{thesisYes} Confirmed</span>
+                  <span className="text-text-muted">·</span>
+                  <span className="text-signal-amber">{thesisPartial} Partial</span>
+                  <span className="text-text-muted">·</span>
+                  <span className="text-signal-red">{thesisNo} Not Passed</span>
+                </div>
+                {/* Mobile: compact icons */}
+                <div className="flex sm:hidden items-center gap-1.5 text-2xs font-bold">
+                  <span className="text-signal-green">{thesisYes}✓</span>
+                  <span className="text-signal-amber">{thesisPartial}~</span>
+                  <span className="text-signal-red">{thesisNo}✕</span>
+                </div>
+                <button onClick={() => setShowEvidence(!showEvidence)}
+                  className="text-2xs font-semibold text-signal-blue hover:underline">
+                  {showEvidence ? "Hide" : "Show"} sources
+                </button>
+              </div>
+            }
+          />
+
+          <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+            <div className="h-full bg-signal-green rounded-full transition-all"
+              style={{ width: `${(company.thesisPassed / company.thesisTotal) * 100}%` }} />
+          </div>
+
+          <div className="space-y-1">
+            {thesisEntries.map((entry) => (
+              <div key={entry.key} className={`rounded-lg p-3 ${ThesisRowBg(entry.data.answer)}`}>
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5"><ThesisIcon answer={entry.data.answer} /></span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                      <p className="text-xs font-semibold text-text-primary">{entry.label}</p>
+                      <ThesisLabel answer={entry.data.answer} />
+                    </div>
+                    <BulletList text={entry.data.summary} textClass="text-xs text-text-secondary" />
+                    {showEvidence && (
+                      <div className="mt-2 space-y-1">
+                        <p className="text-2xs text-text-muted leading-relaxed italic">"{entry.data.evidence}"</p>
+                        <span className="text-2xs text-text-muted">Source: {entry.data.source}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Management tone */}
+          <ManagementToneCard
+            tone={company.managementTone}
+            keyQuote={company.thesis.managementTone.keyQuote}
+            source={company.thesis.managementTone.source}
+            tc={tc}
+          />
+        </section>
+
+        {/* 5 — What happened this quarter */}
+        <section className="rounded-2xl p-5 bg-signal-blue-bg border border-signal-blue/20">
+          <p className="text-2xs font-bold text-signal-blue uppercase tracking-widest mb-1.5">What happened this quarter</p>
+          <BulletList text={company.overallSummary} textClass="text-xs text-text-secondary" />
+        </section>
 
         {/* Action box — 3 audiences */}
         <div className="card-base border-t-2 border-signal-blue overflow-hidden">
@@ -916,93 +1048,7 @@ export default function CompanyDetail() {
           </div>
         </div>
 
-        {/* 4 — Summary strip */}
-        <div className={`rounded-2xl p-4 space-y-2.5 border border-current/20 ${vc.bg}`}>
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <span className={`text-sm font-extrabold ${vc.text}`}>{company.verdict.emoji} {company.verdict.label}</span>
-            <span className={`text-sm font-extrabold ${vc.text}`}>{company.compositeScore.toFixed(1)}/5</span>
-            {company.confidence.total > 0 && (
-              <span className="text-2xs font-semibold px-2 py-0.5 rounded-full ml-auto bg-card/60 text-text-secondary border border-border">
-                ✓ {company.confidence.display}
-              </span>
-            )}
-          </div>
-          <BulletList text={company.overallSummary} textClass="text-xs text-text-secondary" />
-        </div>
-
-        {/* 5 — Investment thesis */}
-        <section id="section-thesis" className="card-base p-5 space-y-4 border-t-2 border-signal-blue">
-          <SectionHeader
-            title="Investment thesis"
-            accent="blue"
-            right={
-              <div className="flex items-center gap-2">
-                {/* Desktop: full labels */}
-                <div className="hidden sm:flex items-center gap-2 text-2xs font-bold">
-                  <span className="text-signal-green">{thesisYes} Confirmed</span>
-                  <span className="text-text-muted">·</span>
-                  <span className="text-signal-amber">{thesisPartial} Partial</span>
-                  <span className="text-text-muted">·</span>
-                  <span className="text-signal-red">{thesisNo} Not Passed</span>
-                </div>
-                {/* Mobile: compact icons */}
-                <div className="flex sm:hidden items-center gap-1.5 text-2xs font-bold">
-                  <span className="text-signal-green">{thesisYes}✓</span>
-                  <span className="text-signal-amber">{thesisPartial}~</span>
-                  <span className="text-signal-red">{thesisNo}✕</span>
-                </div>
-                <button onClick={() => setShowEvidence(!showEvidence)}
-                  className="text-2xs font-semibold text-signal-blue hover:underline">
-                  {showEvidence ? "Hide" : "Show"} sources
-                </button>
-              </div>
-            }
-          />
-
-          <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
-            <div className="h-full bg-signal-green rounded-full transition-all"
-              style={{ width: `${(company.thesisPassed / company.thesisTotal) * 100}%` }} />
-          </div>
-
-          <div className="space-y-1">
-            {thesisEntries.map((entry) => (
-              <div key={entry.key} className={`rounded-lg p-3 ${ThesisRowBg(entry.data.answer)}`}>
-                <div className="flex items-start gap-2">
-                  <span className="mt-0.5"><ThesisIcon answer={entry.data.answer} /></span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                      <p className="text-xs font-semibold text-text-primary">{entry.label}</p>
-                      <ThesisLabel answer={entry.data.answer} />
-                    </div>
-                    <BulletList text={entry.data.summary} textClass="text-xs text-text-secondary" />
-                    {showEvidence && (
-                      <div className="mt-2 space-y-1">
-                        <p className="text-2xs text-text-muted leading-relaxed italic">"{entry.data.evidence}"</p>
-                        <span className="text-2xs text-text-muted">Source: {entry.data.source}</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Management tone */}
-          <ManagementToneCard
-            tone={company.managementTone}
-            keyQuote={company.thesis.managementTone.keyQuote}
-            source={company.thesis.managementTone.source}
-            tc={tc}
-          />
-        </section>
-
-        {/* Analyst summary — what happened only */}
-        <section className="rounded-2xl p-5 bg-signal-blue-bg border border-signal-blue/20">
-          <p className="text-2xs font-bold text-signal-blue uppercase tracking-widest mb-1.5">What happened this quarter</p>
-          <BulletList text={company.overallSummary} textClass="text-xs text-text-secondary" />
-        </section>
-
-        {/* Parameter breakdown */}
+        {/* 6 — Parameter breakdown */}
         <section id="section-params" className="space-y-3">
           <SectionHeader title="Parameter breakdown" accent="neutral" />
           {params.map((p) => (
@@ -1011,7 +1057,17 @@ export default function CompanyDetail() {
           ))}
         </section>
 
-        {/* Risk factors */}
+        {/* Valuation section */}
+        <div id="section-valuation">
+        <ValuationSection
+          valuationEstimate={valuationEstimate}
+          marketCap={marketCap}
+          quarter={activeQ}
+          price={company.price}
+        />
+        </div>
+
+        {/* 7 — Risk factors */}
         {company.riskFactors.length > 0 && (
           <section id="section-risks" className="rounded-2xl p-5 bg-signal-red-bg border border-signal-red/20 space-y-3">
             <SectionHeader title="Risk factors" accent="red" />
@@ -1035,6 +1091,9 @@ export default function CompanyDetail() {
             })}
           </section>
         )}
+
+        {/* Close Insights tab wrapper */}
+        </>}
 
         {/* Footer */}
         <footer className="text-center py-6 border-t border-border">
