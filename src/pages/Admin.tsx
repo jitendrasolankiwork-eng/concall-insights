@@ -3,9 +3,10 @@ import { Link } from "react-router-dom";
 import {
   fetchAllPrompts, savePrompt, resetPrompt,
   fetchSheetRows, addSheetRow, updateSheetRow, deleteSheetRow, processSymbol,
-  fetchWriterSetup, bseLookup, bseFilings,
+  fetchWriterSetup, bseLookup, bseFilings, fetchChangelog,
   type SheetRowInput,
 } from "@/lib/api";
+import { CompanySearch } from "@/components/CompanySearch";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface PromptMeta {
@@ -66,7 +67,7 @@ function StatusBadge({ status }: { status: string }) {
                         "bg-signal-amber-bg text-signal-amber border-signal-amber/20";
   const label = s === "processed" ? "✓ processed" : s === "error" ? "✕ error" : "○ pending";
   return (
-    <span className={`text-2xs font-semibold px-2 py-0.5 rounded-full border ${cls}`}>
+    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${cls}`}>
       {label}
     </span>
   );
@@ -79,7 +80,7 @@ function PriorityBadge({ priority }: { priority: string }) {
     p === "low"    ? "bg-muted text-text-muted border-border" :
                      "bg-muted text-text-secondary border-border";
   return (
-    <span className={`text-2xs font-medium px-1.5 py-0.5 rounded border ${cls}`}>
+    <span className={`text-xs font-medium px-2 py-0.5 rounded border ${cls}`}>
       {p}
     </span>
   );
@@ -196,43 +197,56 @@ function EditPanel({
   const [msg,        setMsg]        = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [processMsg, setProcessMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
-  // BSE auto-discovery state
-  const [bseLooking,  setBseLooking]  = useState(false);
-  const [bseCode,     setBseCode]     = useState<string | null>(null);
-  const [bseFilingList, setBseFilingList] = useState<{ type: string; title: string; date: string; url: string }[]>([]);
-  const [bseMsg,      setBseMsg]      = useState<string | null>(null);
+  // BSE / Screener auto-discovery state
+  const [bseLooking,       setBseLooking]       = useState(false);
+  const [bseCode,          setBseCode]          = useState<string | null>(null);
+  const [bseMsg,           setBseMsg]           = useState<string | null>(null);
+  // Multi-quarter selection
+  const [quarterSelections, setQuarterSelections] = useState<{
+    quarter: string; date: string;
+    concallUrl: string; pptUrl: string;
+    selected: boolean;
+  }[]>([]);
 
   const handleBseLookup = async () => {
     if (!form.symbol) return;
     setBseLooking(true);
     setBseMsg(null);
-    setBseFilingList([]);
+    setQuarterSelections([]);
     setBseCode(null);
     try {
-      // Step 1: lookup company name + market cap + BSE code
-      const lookup = await bseLookup(form.symbol);
+      const [lookup, filingsResp] = await Promise.all([
+        bseLookup(form.symbol),
+        bseFilings(form.symbol),
+      ]);
+
+      // Fill company name + market cap
       if (lookup.companyName && !form.companyName) set("companyName", lookup.companyName);
       if (lookup.marketCap   && !form.marketCap)   set("marketCap",   String(lookup.marketCap));
 
-      const code = lookup.bseCode;
-      if (code) {
-        setBseCode(code);
-        // Step 2: fetch filings
-        const filingsResp = await bseFilings(code);
-        const list = filingsResp.filings || [];
-        setBseFilingList(list);
-        setBseMsg(list.length > 0
-          ? `Found ${list.length} filing${list.length > 1 ? "s" : ""} — click to use`
-          : "No recent concall/PPT filings found on BSE"
-        );
+      // Build quarter selection list — one entry per concall date (each has transcript + PPT)
+      const concallEntries = (filingsResp.filings || []).filter((f: any) => f.type === "concall");
+      const selections = concallEntries.map((f: any, i: number) => ({
+        quarter   : f.quarter || "",
+        date      : f.date,
+        concallUrl: f.transcriptUrl || f.url || "",
+        pptUrl    : f.pptUrl || "",
+        selected  : i < 2,  // default: latest 2 selected
+      }));
+      setQuarterSelections(selections);
+
+      if (selections.length > 0) {
+        setBseMsg(`Found ${selections.length} quarters on Screener — select which to add`);
+      } else if (lookup.companyName) {
+        setBseMsg("Company found — no concall/PPT links on Screener, enter URLs manually");
       } else {
-        setBseMsg(lookup.companyName
-          ? "Auto-filled company name — BSE code not found, enter PDF URLs manually"
-          : "Company not found. Check ticker and try again."
-        );
+        setBseMsg("Company not found on Screener. Check ticker and try again.");
       }
+
+      if (lookup.screenerOk) setBseCode("screener.in");
+
     } catch (e: any) {
-      setBseMsg("BSE lookup failed — enter details manually");
+      setBseMsg("Lookup failed — enter details manually");
     } finally {
       setBseLooking(false);
     }
@@ -250,10 +264,43 @@ function EditPanel({
     setForm((prev) => ({ ...prev, [field]: value }));
 
   const handleSave = async () => {
-    if (!form.symbol || !form.quarter) return;
     setSaving(true);
     setMsg(null);
     try {
+      // ── Multi-quarter add (Screener mode) ──────────────────────────────────
+      const selectedQs = quarterSelections.filter(q => q.selected);
+      if (mode === "add" && selectedQs.length > 0) {
+        if (!form.symbol) { setSaving(false); return; }
+        let saved = 0;
+        const errors: string[] = [];
+        for (const q of selectedQs) {
+          try {
+            const rowData: SheetRowInput = {
+              ...form,
+              quarter   : q.quarter,
+              concallUrl: q.concallUrl,
+              pptUrl    : q.pptUrl,
+            };
+            const resp = await addSheetRow(pin, rowData);
+            if (resp.success) saved++;
+            else errors.push(`${q.quarter}: ${resp.error}`);
+          } catch (e: any) {
+            errors.push(`${q.quarter}: ${e.message}`);
+          }
+        }
+        if (errors.length === 0) {
+          setMsg({ type: "ok", text: `Added ${saved} quarter${saved > 1 ? "s" : ""} to sheet ✓` });
+          setSaved(true);
+          onSaved();
+        } else {
+          setMsg({ type: "err", text: errors.join(" · ") });
+        }
+        setSaving(false);
+        return;
+      }
+
+      // ── Single row add / edit (manual mode) ────────────────────────────────
+      if (!form.symbol || !form.quarter) { setSaving(false); return; }
       let resp;
       if (mode === "add") {
         resp = await addSheetRow(pin, form);
@@ -279,7 +326,7 @@ function EditPanel({
     setProcessing(true);
     setProcessMsg(null);
     try {
-      const resp = await processSymbol(pin, form.symbol.toUpperCase());
+      const resp = await processSymbol(pin, form.symbol.toUpperCase(), form.quarter || undefined);
       if (resp.success) {
         const detail = resp.result?.details?.[0];
         const text = detail
@@ -298,18 +345,18 @@ function EditPanel({
     }
   };
 
-  const inputCls = "w-full bg-background border border-border rounded-lg px-3 py-2 text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-signal-blue/30 focus:border-signal-blue/40 transition-all";
-  const labelCls = "block text-2xs font-semibold text-text-secondary uppercase tracking-wider mb-1";
+  const inputCls = "w-full bg-background border border-border rounded-lg px-3 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-signal-blue/30 focus:border-signal-blue/40 transition-all";
+  const labelCls = "block text-xs font-semibold text-text-secondary uppercase tracking-wider mb-1.5";
 
   return (
-    <div className="w-80 flex-shrink-0 border-l border-border bg-card flex flex-col overflow-hidden">
+    <div className="w-[500px] flex-shrink-0 border-l border-border bg-card flex flex-col">
       {/* Panel header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border flex-shrink-0">
         <div>
-          <h3 className="text-xs font-bold text-text-primary">
+          <h3 className="text-base font-bold text-text-primary">
             {mode === "add" ? "Add Company" : `Edit — ${row?.symbol}`}
           </h3>
-          <p className="text-2xs text-text-muted mt-0.5">
+          <p className="text-xs text-text-muted mt-0.5">
             {mode === "add" ? "New row in Google Sheet" : `Row ${row?.rowIndex}`}
           </p>
         </div>
@@ -325,15 +372,45 @@ function EditPanel({
         <div>
           <label className={labelCls}>NSE Ticker *</label>
           <div className="flex gap-2">
-            <input value={form.symbol}
-              onChange={(e) => { set("symbol", e.target.value.toUpperCase()); setBseMsg(null); setBseFilingList([]); }}
-              placeholder="e.g. V2RETAIL"
+            <CompanySearch
+              value={form.symbol}
+              onChange={(v) => { set("symbol", v); setBseMsg(null); setQuarterSelections([]); }}
+              onSelect={(company) => {
+                set("symbol",      company.symbol);
+                set("companyName", company.name);
+                setBseMsg(null);
+                setQuarterSelections([]);
+                // Auto-trigger Screener lookup after a brief tick
+                setTimeout(() => {
+                  setBseLooking(true);
+                  Promise.all([
+                    bseLookup(company.symbol),
+                    bseFilings(company.symbol),
+                  ]).then(([lookup, filingsResp]) => {
+                    if (lookup.marketCap) set("marketCap", String(lookup.marketCap));
+                    const concallEntries = (filingsResp.filings || []).filter((f: any) => f.type === "concall");
+                    const selections = concallEntries.map((f: any, i: number) => ({
+                      quarter: f.quarter || "", date: f.date,
+                      concallUrl: f.transcriptUrl || f.url || "",
+                      pptUrl: f.pptUrl || "", selected: i < 2,
+                    }));
+                    setQuarterSelections(selections);
+                    setBseCode(lookup.screenerOk ? "screener.in" : null);
+                    setBseMsg(selections.length > 0
+                      ? `Found ${selections.length} quarters on Screener — select which to add`
+                      : "Company found — enter PDF URLs manually"
+                    );
+                  }).catch(() => setBseMsg("Screener lookup failed — enter details manually"))
+                    .finally(() => setBseLooking(false));
+                }, 50);
+              }}
+              placeholder="Search name or symbol…"
               className={`${inputCls} flex-1`}
-              required
+              disabled={mode === "edit"}
             />
             <button type="button" onClick={handleBseLookup}
               disabled={!form.symbol || bseLooking}
-              title="Auto-fill from BSE"
+              title="Auto-fill from Screener.in"
               className="px-3 py-2 rounded-lg text-xs font-semibold bg-signal-blue-bg text-signal-blue border border-signal-blue/30 hover:bg-signal-blue hover:text-card transition-all disabled:opacity-40 flex-shrink-0 flex items-center gap-1">
               {bseLooking
                 ? <span className="w-3 h-3 border-2 border-signal-blue/40 border-t-signal-blue rounded-full animate-spin" />
@@ -342,8 +419,8 @@ function EditPanel({
           </div>
           {/* BSE lookup feedback */}
           {bseMsg && (
-            <p className={`text-2xs mt-1.5 ${bseFilingList.length > 0 ? "text-signal-green" : "text-text-muted"}`}>
-              {bseCode && <span className="font-semibold">BSE {bseCode} · </span>}{bseMsg}
+            <p className={`text-xs mt-1.5 ${quarterSelections.length > 0 ? "text-signal-green" : "text-text-muted"}`}>
+              {bseCode && <span className="font-semibold">📊 {bseCode} · </span>}{bseMsg}
             </p>
           )}
         </div>
@@ -357,53 +434,83 @@ function EditPanel({
         </div>
 
         {/* Quarter */}
-        <div>
-          <label className={labelCls}>Quarter * <span className="font-normal normal-case text-text-muted">(e.g. FY26-Q3)</span></label>
-          <input value={form.quarter}
-            onChange={(e) => set("quarter", e.target.value)}
-            placeholder="FY26-Q3"
-            className={inputCls}
-            required
-          />
-        </div>
-
-        {/* URLs with BSE filing suggestions */}
-        <div>
-          <label className={labelCls}>Concall PDF URL <span className="font-normal normal-case text-text-muted">(BSE)</span></label>
-          <input value={form.concallUrl}
-            onChange={(e) => set("concallUrl", e.target.value)}
-            placeholder={bseFilingList.length > 0 ? "Click a suggestion below ↓" : "https://www.bseindia.com/..."}
-            className={inputCls}
-          />
-          {/* Concall suggestions */}
-          {bseFilingList.filter(f => f.type === "concall").slice(0, 3).map((f, i) => (
-            <button key={i} type="button"
-              onClick={() => set("concallUrl", f.url)}
-              className="mt-1 w-full text-left px-2 py-1.5 rounded-lg bg-muted hover:bg-signal-blue-bg border border-border hover:border-signal-blue/30 transition-all group">
-              <span className="text-2xs font-semibold text-signal-blue group-hover:text-signal-blue">📄 </span>
-              <span className="text-2xs text-text-secondary">{f.title.slice(0, 55)}{f.title.length > 55 ? "…" : ""}</span>
-              <span className="text-2xs text-text-muted ml-1">· {f.date}</span>
-            </button>
-          ))}
-        </div>
-        <div>
-          <label className={labelCls}>Investor PPT URL <span className="font-normal normal-case text-text-muted">(optional)</span></label>
-          <input value={form.pptUrl}
-            onChange={(e) => set("pptUrl", e.target.value)}
-            placeholder={bseFilingList.length > 0 ? "Click a suggestion below ↓" : "https://www.bseindia.com/..."}
-            className={inputCls}
-          />
-          {/* PPT suggestions */}
-          {bseFilingList.filter(f => f.type === "ppt").slice(0, 3).map((f, i) => (
-            <button key={i} type="button"
-              onClick={() => set("pptUrl", f.url)}
-              className="mt-1 w-full text-left px-2 py-1.5 rounded-lg bg-muted hover:bg-signal-blue-bg border border-border hover:border-signal-blue/30 transition-all group">
-              <span className="text-2xs font-semibold text-signal-blue">📊 </span>
-              <span className="text-2xs text-text-secondary">{f.title.slice(0, 55)}{f.title.length > 55 ? "…" : ""}</span>
-              <span className="text-2xs text-text-muted ml-1">· {f.date}</span>
-            </button>
-          ))}
-        </div>
+        {/* ── Quarter picker (Screener mode) OR manual fields ── */}
+        {quarterSelections.length > 0 ? (
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className={labelCls}>Select Quarters to Add</label>
+              <div className="flex gap-2">
+                <button type="button"
+                  onClick={() => setQuarterSelections(prev => prev.map(q => ({ ...q, selected: true })))}
+                  className="text-2xs text-signal-blue hover:underline">all</button>
+                <button type="button"
+                  onClick={() => setQuarterSelections(prev => prev.map(q => ({ ...q, selected: false })))}
+                  className="text-2xs text-text-muted hover:underline">none</button>
+              </div>
+            </div>
+            <div className="space-y-1">
+              {quarterSelections.map((q, i) => (
+                <button key={i} type="button"
+                  onClick={() => setQuarterSelections(prev =>
+                    prev.map((p, j) => j === i ? { ...p, selected: !p.selected } : p)
+                  )}
+                  className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left transition-all ${
+                    q.selected
+                      ? "bg-signal-blue-bg border-signal-blue/40"
+                      : "bg-muted border-border hover:border-border/80"
+                  }`}>
+                  {/* Checkbox */}
+                  <span className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center text-xs font-bold transition-all ${
+                    q.selected ? "bg-signal-blue border-signal-blue text-card" : "border-text-muted"
+                  }`}>{q.selected ? "✓" : ""}</span>
+                  {/* Quarter label */}
+                  <span className={`text-xs font-bold w-20 flex-shrink-0 ${q.selected ? "text-signal-blue" : "text-text-secondary"}`}>
+                    {q.quarter}
+                  </span>
+                  {/* Date */}
+                  <span className="text-xs text-text-muted">{q.date}</span>
+                  {/* Link indicators */}
+                  <div className="ml-auto flex gap-1.5 flex-shrink-0">
+                    {q.concallUrl && <span className="text-sm text-signal-green" title="Transcript">📄</span>}
+                    {q.pptUrl     && <span className="text-sm text-signal-blue"  title="PPT">📊</span>}
+                  </div>
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-text-muted mt-1.5">
+              {quarterSelections.filter(q => q.selected).length} quarter{quarterSelections.filter(q => q.selected).length !== 1 ? "s" : ""} selected · URLs auto-filled from Screener
+            </p>
+          </div>
+        ) : (
+          /* Manual entry — shown when no screener data */
+          <>
+            <div>
+              <label className={labelCls}>Quarter * <span className="font-normal normal-case text-text-muted">(e.g. FY26-Q3)</span></label>
+              <input value={form.quarter}
+                onChange={(e) => set("quarter", e.target.value)}
+                placeholder="FY26-Q3"
+                className={inputCls}
+                required
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Concall PDF URL <span className="font-normal normal-case text-text-muted">(BSE)</span></label>
+              <input value={form.concallUrl}
+                onChange={(e) => set("concallUrl", e.target.value)}
+                placeholder="https://www.bseindia.com/..."
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className={labelCls}>Investor PPT URL <span className="font-normal normal-case text-text-muted">(optional)</span></label>
+              <input value={form.pptUrl}
+                onChange={(e) => set("pptUrl", e.target.value)}
+                placeholder="https://www.bseindia.com/..."
+                className={inputCls}
+              />
+            </div>
+          </>
+        )}
 
         {/* Market Cap — auto-filled from Yahoo */}
         <div>
@@ -458,7 +565,7 @@ function EditPanel({
 
         {/* Save message */}
         {msg && (
-          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-2xs font-semibold ${
+          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold ${
             msg.type === "ok"
               ? "bg-signal-green-bg text-signal-green"
               : "bg-signal-red-bg text-signal-red"
@@ -469,7 +576,7 @@ function EditPanel({
 
         {/* Process result */}
         {processMsg && (
-          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-2xs font-semibold ${
+          <div className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold ${
             processMsg.type === "ok"
               ? "bg-signal-green-bg text-signal-green"
               : "bg-signal-red-bg text-signal-red"
@@ -482,19 +589,29 @@ function EditPanel({
       {/* Footer actions */}
       <div className="border-t border-border px-4 py-3 flex-shrink-0 space-y-2">
         {/* Save button */}
-        <button onClick={handleSave} disabled={saving || !form.symbol || !form.quarter}
-          className="w-full flex items-center justify-center gap-2 bg-signal-blue text-card text-xs font-semibold px-4 py-2 rounded-lg hover:opacity-90 transition-all disabled:opacity-40">
-          {saving
-            ? <><span className="w-3 h-3 border-2 border-card/40 border-t-card rounded-full animate-spin" /> Saving…</>
-            : mode === "add" ? "Add to Sheet" : "Save to Sheet"
-          }
-        </button>
+        {(() => {
+          const selectedCount = quarterSelections.filter(q => q.selected).length;
+          const canSave = form.symbol && (selectedCount > 0 || form.quarter);
+          const label = saving ? null
+            : selectedCount > 1 ? `Add ${selectedCount} quarters to Sheet`
+            : mode === "add" ? "Add to Sheet"
+            : "Save to Sheet";
+          return (
+            <button onClick={handleSave} disabled={saving || !canSave}
+              className="w-full flex items-center justify-center gap-2 bg-signal-blue text-card text-sm font-semibold px-4 py-2.5 rounded-lg hover:opacity-90 transition-all disabled:opacity-40">
+              {saving
+                ? <><span className="w-3 h-3 border-2 border-card/40 border-t-card rounded-full animate-spin" /> Saving…</>
+                : label
+              }
+            </button>
+          );
+        })()}
 
         {/* Process button — only enabled after save */}
         <button onClick={handleProcess}
           disabled={processing || !saved || !form.symbol}
           title={!saved ? "Save to sheet first" : "Run AI extraction pipeline (2–5 min)"}
-          className={`w-full flex items-center justify-center gap-2 text-xs font-semibold px-4 py-2 rounded-lg border transition-all ${
+          className={`w-full flex items-center justify-center gap-2 text-sm font-semibold px-4 py-2.5 rounded-lg border transition-all ${
             saved && !processing
               ? "bg-signal-green-bg border-signal-green/30 text-signal-green hover:bg-signal-green hover:text-card"
               : "bg-muted border-border text-text-muted cursor-not-allowed opacity-50"
@@ -504,6 +621,7 @@ function EditPanel({
             : "▶ Process with AI"
           }
         </button>
+
 
         <button onClick={onClose}
           className="w-full text-2xs text-text-muted hover:text-text-primary transition-colors py-1">
@@ -579,37 +697,59 @@ function SetupBanner() {
   );
 }
 
-// ── Reprocess All Modal ───────────────────────────────────────────────────────
+// ── Reprocess Modal ───────────────────────────────────────────────────────────
 type SymbolResult = { symbol: string; status: "pending" | "processing" | "done" | "error"; detail: string };
 
 function ReprocessModal({
-  symbols, pin, onClose, onDone,
-}: { symbols: string[]; pin: string; onClose: () => void; onDone: () => void }) {
-  const [phase,    setPhase]    = useState<"confirm" | "running" | "done">("confirm");
-  const [results,  setResults]  = useState<SymbolResult[]>(
-    symbols.map((s) => ({ symbol: s, status: "pending", detail: "" }))
+  rows, pin, onClose, onDone,
+}: { rows: SheetRow[]; pin: string; onClose: () => void; onDone: () => void }) {
+
+  // Row key = "SYMBOL__QUARTER"
+  const rowKey = (r: SheetRow) => `${r.symbol}__${r.quarterRaw || r.quarter}`;
+
+  // Default selection: pending rows only
+  const [selected, setSelected] = useState<Set<string>>(() =>
+    new Set(rows.filter(r => r.status !== "processed").map(rowKey))
   );
-  const [current,  setCurrent]  = useState(0);
+
+  const [phase,   setPhase]   = useState<"confirm" | "running" | "done">("confirm");
+  const [results, setResults] = useState<SymbolResult[]>([]);
+  const [current, setCurrent] = useState(0);
   const cancelled = useRef(false);
 
+  const toggle       = (key: string) => setSelected(prev => { const s = new Set(prev); s.has(key) ? s.delete(key) : s.add(key); return s; });
+  const selectAll    = () => setSelected(new Set(rows.map(rowKey)));
+  const selectNone   = () => setSelected(new Set());
+  const selectPending = () => setSelected(new Set(rows.filter(r => r.status !== "processed").map(rowKey)));
+
+  // Unique symbols of selected rows (processing happens per symbol)
+  const selectedSymbols = Array.from(new Set(
+    rows.filter(r => selected.has(rowKey(r))).map(r => r.symbol)
+  ));
+
+  const done   = results.filter(r => r.status === "done").length;
+  const errors = results.filter(r => r.status === "error").length;
+
   const start = async () => {
+    const syms = selectedSymbols;
+    setResults(syms.map(s => ({ symbol: s, status: "pending" as const, detail: "" })));
     setPhase("running");
-    for (let i = 0; i < symbols.length; i++) {
+    for (let i = 0; i < syms.length; i++) {
       if (cancelled.current) break;
-      const sym = symbols[i];
+      const sym = syms[i];
       setCurrent(i);
-      setResults((prev) => prev.map((r) => r.symbol === sym ? { ...r, status: "processing" } : r));
+      setResults(prev => prev.map(r => r.symbol === sym ? { ...r, status: "processing" } : r));
       try {
         const resp = await processSymbol(pin, sym);
         const detail = resp.result?.details?.map((d: any) =>
           `${d.quarter ?? ""} → ${d.status}${d.score != null ? ` (${d.score})` : ""}`
-        ).join(", ") || (resp.success ? "done" : resp.error || "error");
-        setResults((prev) => prev.map((r) => r.symbol === sym
+        ).join(" · ") || (resp.success ? "done" : resp.error || "error");
+        setResults(prev => prev.map(r => r.symbol === sym
           ? { ...r, status: resp.success ? "done" : "error", detail }
           : r
         ));
       } catch (err: any) {
-        setResults((prev) => prev.map((r) => r.symbol === sym
+        setResults(prev => prev.map(r => r.symbol === sym
           ? { ...r, status: "error", detail: err.message }
           : r
         ));
@@ -621,96 +761,133 @@ function ReprocessModal({
 
   const cancel = () => { cancelled.current = true; onClose(); };
 
-  const done   = results.filter((r) => r.status === "done").length;
-  const errors = results.filter((r) => r.status === "error").length;
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4">
-      <div className="w-full max-w-md bg-card rounded-2xl border border-border shadow-2xl overflow-hidden">
+      <div className="w-full max-w-lg bg-card rounded-2xl border border-border shadow-2xl overflow-hidden">
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
           <div>
-            <h3 className="text-sm font-bold text-text-primary">Reprocess All Companies</h3>
-            <p className="text-2xs text-text-muted mt-0.5">
-              {phase === "confirm" ? `${symbols.length} unique companies · ~₹35 estimated cost`
-               : phase === "running" ? `${done}/${symbols.length} done${errors > 0 ? ` · ${errors} errors` : ""}`
-               : `Complete — ${done} processed, ${errors} failed`}
+            <h3 className="text-base font-bold text-text-primary">
+              {phase === "confirm" ? "Select Rows to Process" : phase === "running" ? "Processing…" : "Done"}
+            </h3>
+            <p className="text-xs text-text-muted mt-0.5">
+              {phase === "confirm"
+                ? `${selected.size} row${selected.size !== 1 ? "s" : ""} selected across ${selectedSymbols.length} compan${selectedSymbols.length !== 1 ? "ies" : "y"}`
+                : phase === "running"
+                ? `${done}/${selectedSymbols.length} done${errors > 0 ? ` · ${errors} errors` : ""}`
+                : `Complete — ${done} processed, ${errors} failed`}
             </p>
           </div>
           {phase !== "running" && (
-            <button onClick={onClose} className="text-text-muted hover:text-text-primary text-lg px-1">×</button>
+            <button onClick={onClose} className="text-text-muted hover:text-text-primary text-xl px-1">×</button>
           )}
         </div>
 
-        {/* Confirm screen */}
+        {/* ── Confirm: row picker ── */}
         {phase === "confirm" && (
-          <div className="px-5 py-4 space-y-4">
-            <div className="bg-signal-amber-bg border border-signal-amber/30 rounded-xl px-4 py-3 space-y-1">
-              <p className="text-xs font-semibold text-signal-amber">What this will do</p>
-              <ul className="space-y-1">
-                {["Process all {n} companies sequentially (one at a time)".replace("{n}", String(symbols.length)),
-                  "Force re-extract even already-processed companies",
-                  "Update Google Sheet status after each one",
-                  "Takes ~2–4 min per company (30–90 min total)"
-                ].map((t, i) => (
-                  <li key={i} className="text-2xs text-text-secondary flex gap-2">
-                    <span className="text-signal-amber flex-shrink-0">·</span>{t}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="space-y-1.5 max-h-36 overflow-y-auto">
-              {symbols.map((s) => (
-                <div key={s} className="flex items-center gap-2 text-2xs text-text-muted">
-                  <span className="w-1.5 h-1.5 rounded-full bg-border flex-shrink-0" />
-                  {s}
-                </div>
+          <div className="px-5 py-4 space-y-3">
+
+            {/* Quick select buttons */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-muted mr-1">Select:</span>
+              {[
+                { label: "All",     fn: selectAll },
+                { label: "Pending", fn: selectPending },
+                { label: "None",    fn: selectNone },
+              ].map(({ label, fn }) => (
+                <button key={label} type="button" onClick={fn}
+                  className="text-xs font-semibold px-3 py-1 rounded-lg bg-muted text-text-secondary hover:bg-border transition-all">
+                  {label}
+                </button>
               ))}
+              <span className="ml-auto text-xs text-text-muted">{selected.size} selected</span>
             </div>
+
+            {/* Row list */}
+            <div className="space-y-1 max-h-80 overflow-y-auto pr-1">
+              {rows.map((row) => {
+                const key = rowKey(row);
+                const sel = selected.has(key);
+                const isProcessed = row.status === "processed";
+                return (
+                  <button key={key} type="button" onClick={() => toggle(key)}
+                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-all ${
+                      sel
+                        ? "bg-signal-blue-bg border-signal-blue/40"
+                        : "bg-muted border-border hover:border-signal-blue/20"
+                    }`}>
+                    {/* Checkbox */}
+                    <span className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center text-xs font-bold transition-all ${
+                      sel ? "bg-signal-blue border-signal-blue text-card" : "border-text-muted bg-background"
+                    }`}>{sel ? "✓" : ""}</span>
+
+                    {/* Symbol */}
+                    <span className={`text-sm font-bold font-mono w-28 flex-shrink-0 ${sel ? "text-signal-blue" : "text-text-primary"}`}>
+                      {row.symbol}
+                    </span>
+
+                    {/* Quarter badge */}
+                    <span className="text-xs px-2 py-0.5 rounded bg-muted border border-border text-text-secondary flex-shrink-0">
+                      {row.quarter}
+                    </span>
+
+                    {/* Status */}
+                    <div className="ml-auto flex-shrink-0">
+                      {isProcessed
+                        ? <span className="text-xs text-signal-green font-semibold">✓ processed</span>
+                        : <span className="text-xs text-signal-amber font-semibold">○ pending</span>
+                      }
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Cost estimate */}
+            <p className="text-xs text-text-muted">
+              ~₹{(selectedSymbols.length * 2.7).toFixed(0)} estimated cost for {selectedSymbols.length} compan{selectedSymbols.length !== 1 ? "ies" : "y"} · ~{selectedSymbols.length * 3}–{selectedSymbols.length * 4} min
+            </p>
+
             <div className="flex gap-2 pt-1">
               <button onClick={onClose}
-                className="flex-1 py-2 text-xs font-semibold rounded-xl bg-muted text-text-secondary hover:bg-border transition-all">
+                className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-muted text-text-secondary hover:bg-border transition-all">
                 Cancel
               </button>
-              <button onClick={start}
-                className="flex-1 py-2 text-xs font-semibold rounded-xl bg-signal-blue text-card hover:opacity-90 transition-all">
-                Start Reprocessing →
+              <button onClick={start} disabled={selectedSymbols.length === 0}
+                className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-signal-blue text-card hover:opacity-90 transition-all disabled:opacity-40">
+                Process {selectedSymbols.length > 0 ? `${selectedSymbols.length} Compan${selectedSymbols.length !== 1 ? "ies" : "y"}` : ""} →
               </button>
             </div>
           </div>
         )}
 
-        {/* Running / Done screen */}
+        {/* ── Running / Done ── */}
         {(phase === "running" || phase === "done") && (
           <div className="px-5 py-4 space-y-3">
             {/* Progress bar */}
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-2xs text-text-muted">
-                <span>{phase === "running" ? `Processing ${symbols[current] ?? "…"}` : "All done"}</span>
-                <span>{done + errors}/{symbols.length}</span>
+              <div className="flex items-center justify-between text-xs text-text-muted">
+                <span>{phase === "running" ? `Processing ${selectedSymbols[current] ?? "…"}` : "All done"}</span>
+                <span>{done + errors} / {selectedSymbols.length}</span>
               </div>
-              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-signal-blue rounded-full transition-all duration-500"
-                  style={{ width: `${((done + errors) / symbols.length) * 100}%` }}
-                />
+              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                <div className="h-full bg-signal-blue rounded-full transition-all duration-500"
+                  style={{ width: `${((done + errors) / Math.max(selectedSymbols.length, 1)) * 100}%` }} />
               </div>
             </div>
 
-            {/* Per-company list */}
-            <div className="space-y-1 max-h-64 overflow-y-auto">
+            {/* Per-company results */}
+            <div className="space-y-1.5 max-h-64 overflow-y-auto">
               {results.map((r) => {
                 const icon  = r.status === "done" ? "✓" : r.status === "error" ? "✕" : r.status === "processing" ? "⟳" : "○";
                 const color = r.status === "done" ? "text-signal-green" : r.status === "error" ? "text-signal-red" : r.status === "processing" ? "text-signal-blue animate-pulse" : "text-text-muted";
                 return (
-                  <div key={r.symbol} className="flex items-start gap-2 py-1">
-                    <span className={`text-xs font-bold flex-shrink-0 mt-0.5 ${color}`}>{icon}</span>
+                  <div key={r.symbol} className="flex items-start gap-3 py-1.5 border-b border-border last:border-0">
+                    <span className={`text-sm font-bold flex-shrink-0 mt-0.5 ${color}`}>{icon}</span>
                     <div className="flex-1 min-w-0">
-                      <span className={`text-xs font-semibold ${color}`}>{r.symbol}</span>
-                      {r.detail && (
-                        <p className="text-2xs text-text-muted truncate">{r.detail}</p>
-                      )}
+                      <span className={`text-sm font-semibold ${color}`}>{r.symbol}</span>
+                      {r.detail && <p className="text-xs text-text-muted mt-0.5">{r.detail}</p>}
                     </div>
                   </div>
                 );
@@ -719,13 +896,13 @@ function ReprocessModal({
 
             {phase === "done" && (
               <button onClick={onClose}
-                className="w-full py-2 text-xs font-semibold rounded-xl bg-signal-green text-card hover:opacity-90 transition-all">
+                className="w-full py-2.5 text-sm font-semibold rounded-xl bg-signal-green text-card hover:opacity-90 transition-all">
                 Done ✓
               </button>
             )}
             {phase === "running" && (
               <button onClick={cancel}
-                className="w-full py-2 text-xs font-semibold rounded-xl bg-muted text-text-secondary hover:bg-border transition-all">
+                className="w-full py-2.5 text-sm font-semibold rounded-xl bg-muted text-text-secondary hover:bg-border transition-all">
                 Cancel (finishes current company)
               </button>
             )}
@@ -812,7 +989,7 @@ function CompaniesTab({ pin }: { pin: string }) {
       {/* Reprocess All modal */}
       {showReprocess && (
         <ReprocessModal
-          symbols={symbols}
+          rows={rows}
           pin={pin}
           onClose={() => setShowReprocess(false)}
           onDone={() => { setShowReprocess(false); load(); flash("ok", "Reprocessing complete — sheet updated"); }}
@@ -871,9 +1048,9 @@ function CompaniesTab({ pin }: { pin: string }) {
         {!loading && (
           <div className="flex-1 overflow-y-auto">
             {/* Column headers */}
-            <div className="sticky top-0 z-10 bg-muted border-b border-border grid grid-cols-[80px_1fr_90px_100px_80px_80px_100px_auto] gap-3 px-5 py-2">
+            <div className="sticky top-0 z-10 bg-muted border-b border-border grid grid-cols-[120px_1fr_88px_120px_80px_90px_110px_auto] gap-3 px-5 py-2.5 items-center">
               {["Symbol", "Company", "Quarter", "Status", "Priority", "MCap ₹Cr", "Processed", ""].map((h) => (
-                <span key={h} className="text-2xs font-bold text-text-muted uppercase tracking-wider truncate">{h}</span>
+                <span key={h} className="text-xs font-bold text-text-muted uppercase tracking-wider truncate">{h}</span>
               ))}
             </div>
 
@@ -886,7 +1063,7 @@ function CompaniesTab({ pin }: { pin: string }) {
               rows.map((row, i) => (
                 <div
                   key={`${row.rowIndex}-${row.symbol}-${row.quarter}`}
-                  className={`grid grid-cols-[80px_1fr_90px_100px_80px_80px_100px_auto] gap-3 items-center px-5 py-2.5 transition-colors ${
+                  className={`grid grid-cols-[120px_1fr_88px_120px_80px_90px_110px_auto] gap-3 items-center px-5 py-2.5 transition-colors ${
                     selectedRow?.rowIndex === row.rowIndex ? "bg-signal-blue-bg/30" : "hover:bg-muted/40"
                   } ${i < rows.length - 1 ? "border-b border-border" : ""}`}
                 >
@@ -904,7 +1081,7 @@ function CompaniesTab({ pin }: { pin: string }) {
 
                   {/* Quarter */}
                   <div>
-                    <span className="text-2xs px-1.5 py-0.5 rounded bg-muted text-text-muted border border-border">
+                    <span className="text-xs px-2 py-0.5 rounded bg-muted text-text-muted border border-border">
                       {row.quarter}
                     </span>
                   </div>
@@ -928,14 +1105,14 @@ function CompaniesTab({ pin }: { pin: string }) {
 
                   {/* Last processed */}
                   <div>
-                    <span className="text-2xs text-text-muted">{row.lastProcessedAt || "—"}</span>
+                    <span className="text-xs text-text-muted">{row.lastProcessedAt || "—"}</span>
                   </div>
 
                   {/* Actions */}
                   <div className="flex items-center gap-1 justify-end">
                     <button onClick={() => openEdit(row)}
                       title="Edit"
-                      className={`text-2xs px-2 py-1 rounded-md border transition-all ${
+                      className={`text-xs px-2 py-1 rounded-md border transition-all ${
                         selectedRow?.rowIndex === row.rowIndex
                           ? "bg-signal-blue text-card border-signal-blue"
                           : "text-text-muted border-border hover:text-signal-blue hover:border-signal-blue/30 hover:bg-signal-blue-bg"
@@ -959,7 +1136,7 @@ function CompaniesTab({ pin }: { pin: string }) {
         {/* Footer note */}
         {!loading && (
           <div className="px-5 py-2 border-t border-border flex-shrink-0">
-            <p className="text-2xs text-text-muted">
+            <p className="text-xs text-text-muted">
               Sheet ID: <code className="bg-muted px-1 rounded">1WYKg2WQ...0_E</code>
               · Reads live from Google Sheet CSV export
               · Write operations require Apps Script setup
@@ -1080,9 +1257,9 @@ function PromptsTab({ pin }: { pin: string }) {
     <div className="flex flex-1 overflow-hidden" style={{ height: "calc(100vh - 48px)" }}>
 
       {/* Sidebar */}
-      <aside className="w-60 flex-shrink-0 border-r border-border overflow-y-auto bg-card">
-        <div className="px-3 pt-3 pb-2">
-          <p className="text-2xs text-text-muted">{prompts.length} prompts · {customCount} overridden</p>
+      <aside className="w-72 flex-shrink-0 border-r border-border overflow-y-auto bg-card">
+        <div className="px-4 pt-4 pb-2">
+          <p className="text-xs text-text-muted">{prompts.length} prompts · {customCount} overridden</p>
         </div>
         {CATEGORY_ORDER.map(cat => {
           const items = grouped[cat] || [];
@@ -1090,24 +1267,24 @@ function PromptsTab({ pin }: { pin: string }) {
           const meta = CATEGORY_META[cat] || { icon: "·", color: "text-text-muted" };
           return (
             <div key={cat} className="mb-1">
-              <div className="flex items-center gap-1.5 px-3 pt-3 pb-1.5">
-                <span className="text-xs">{meta.icon}</span>
-                <span className="text-2xs font-bold text-text-muted uppercase tracking-wider">{cat}</span>
+              <div className="flex items-center gap-1.5 px-4 pt-3 pb-1.5">
+                <span className="text-sm">{meta.icon}</span>
+                <span className="text-xs font-bold text-text-muted uppercase tracking-wider">{cat}</span>
               </div>
               {items.map(p => (
                 <button key={p.id} onClick={() => selectPrompt(p)}
-                  className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 transition-all border-l-[3px] ${
+                  className={`w-full text-left px-4 py-2.5 flex items-center justify-between gap-2 transition-all border-l-[3px] ${
                     selected === p.id
                       ? "bg-signal-blue-bg border-signal-blue"
                       : "border-transparent hover:bg-muted/60 hover:border-border"
                   }`}>
-                  <span className={`text-xs leading-snug truncate ${
+                  <span className={`text-sm leading-snug truncate ${
                     selected === p.id ? "font-semibold text-signal-blue" : "text-text-secondary"
                   }`}>
                     {p.name}
                   </span>
                   {p.isCustom && (
-                    <span className="text-2xs font-bold px-1.5 py-0.5 rounded-md bg-signal-amber-bg text-signal-amber flex-shrink-0">
+                    <span className="text-xs font-bold px-1.5 py-0.5 rounded-md bg-signal-amber-bg text-signal-amber flex-shrink-0">
                       ✎
                     </span>
                   )}
@@ -1126,26 +1303,26 @@ function PromptsTab({ pin }: { pin: string }) {
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="text-sm font-bold text-text-primary">{activePrompt.name}</h2>
               {activePrompt.isCustom ? (
-                <span className="text-2xs font-semibold px-2 py-0.5 rounded-full bg-signal-amber-bg text-signal-amber border border-signal-amber/30">
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-signal-amber-bg text-signal-amber border border-signal-amber/30">
                   ✎ Custom override
                 </span>
               ) : (
-                <span className="text-2xs font-medium px-2 py-0.5 rounded-full bg-muted text-text-muted border border-border">
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-muted text-text-muted border border-border">
                   Default
                 </span>
               )}
               {isDirty && (
-                <span className="text-2xs font-semibold px-2 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/30 animate-pulse">
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/30 animate-pulse">
                   ● Unsaved
                 </span>
               )}
             </div>
-            <p className="text-2xs text-text-muted leading-relaxed max-w-2xl">{activePrompt.description}</p>
+            <p className="text-sm text-text-muted leading-relaxed max-w-2xl">{activePrompt.description}</p>
             {activePrompt.variables.length > 0 && (
               <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-2xs font-medium text-text-muted">Variables:</span>
+                <span className="text-xs font-medium text-text-muted">Variables:</span>
                 {activePrompt.variables.map(v => (
-                  <code key={v} className="text-2xs px-2 py-0.5 rounded-md bg-signal-blue-bg text-signal-blue font-mono border border-signal-blue/20">
+                  <code key={v} className="text-xs px-2 py-0.5 rounded-md bg-signal-blue-bg text-signal-blue font-mono border border-signal-blue/20">
                     {`{{${v}}}`}
                   </code>
                 ))}
@@ -1157,7 +1334,7 @@ function PromptsTab({ pin }: { pin: string }) {
             <textarea
               value={editContent}
               onChange={(e) => { setEditContent(e.target.value); setSaveMsg(null); }}
-              className="w-full h-full bg-card border border-border rounded-xl p-4 text-xs font-mono text-text-primary resize-none focus:outline-none focus:ring-2 focus:ring-signal-blue/30 focus:border-signal-blue/40 leading-[1.7] transition-all"
+              className="w-full h-full bg-card border border-border rounded-xl p-4 text-sm font-mono text-text-primary resize-none focus:outline-none focus:ring-2 focus:ring-signal-blue/30 focus:border-signal-blue/40 leading-[1.7] transition-all"
               spellCheck={false}
               placeholder="Prompt content…"
             />
@@ -1166,29 +1343,29 @@ function PromptsTab({ pin }: { pin: string }) {
           <div className="bg-card border-t border-border px-5 py-2.5 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-3 min-w-0">
               {saveMsg ? (
-                <div className={`flex items-center gap-1.5 text-2xs font-semibold ${saveMsg.type === "ok" ? "text-signal-green" : "text-signal-red"}`}>
+                <div className={`flex items-center gap-1.5 text-xs font-semibold ${saveMsg.type === "ok" ? "text-signal-green" : "text-signal-red"}`}>
                   <span>{saveMsg.type === "ok" ? "✓" : "✕"}</span>
                   <span>{saveMsg.text}</span>
                 </div>
               ) : (
-                <span className="text-2xs text-text-muted">{editContent.length.toLocaleString()} chars</span>
+                <span className="text-xs text-text-muted">{editContent.length.toLocaleString()} chars</span>
               )}
             </div>
             <div className="flex items-center gap-2">
               {(activePrompt.isCustom || isDirty) && (
                 <button onClick={handleRestoreDefault}
-                  className="text-2xs font-medium px-3 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-muted transition-all">
+                  className="text-xs font-medium px-3 py-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-muted transition-all">
                   View default
                 </button>
               )}
               {activePrompt.isCustom && (
                 <button onClick={handleReset} disabled={saving}
-                  className="text-2xs font-semibold px-3 py-1.5 rounded-lg bg-signal-red-bg text-signal-red border border-signal-red/20 hover:bg-signal-red hover:text-card transition-all disabled:opacity-40">
+                  className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-signal-red-bg text-signal-red border border-signal-red/20 hover:bg-signal-red hover:text-card transition-all disabled:opacity-40">
                   ↺ Reset
                 </button>
               )}
               <button onClick={handleSave} disabled={saving || !isDirty}
-                className={`text-xs font-semibold px-4 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
+                className={`text-sm font-semibold px-4 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
                   isDirty && !saving
                     ? "bg-signal-blue text-card hover:opacity-90 shadow-sm"
                     : "bg-muted text-text-muted cursor-not-allowed opacity-50"
@@ -1214,7 +1391,7 @@ function PromptsTab({ pin }: { pin: string }) {
 // ── Main Admin Page ───────────────────────────────────────────────────────────
 export default function Admin() {
   const [pin,       setPin]       = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"companies" | "prompts">("companies");
+  const [activeTab, setActiveTab] = useState<"companies" | "prompts" | "how-thesis" | "changelog">("companies");
   const [promptCustomCount, setPromptCustomCount] = useState(0);
 
   useEffect(() => {
@@ -1268,6 +1445,24 @@ export default function Admin() {
                 </span>
               )}
             </button>
+            <button
+              onClick={() => setActiveTab("how-thesis")}
+              className={`text-xs font-semibold px-3 py-1 rounded-lg transition-all ${
+                activeTab === "how-thesis"
+                  ? "bg-signal-green-bg text-signal-green"
+                  : "text-text-muted hover:text-text-primary hover:bg-muted"
+              }`}>
+              How Thesis Works
+            </button>
+            <button
+              onClick={() => setActiveTab("changelog")}
+              className={`text-xs font-semibold px-3 py-1 rounded-lg transition-all ${
+                activeTab === "changelog"
+                  ? "bg-signal-blue-bg text-signal-blue"
+                  : "text-text-muted hover:text-text-primary hover:bg-muted"
+              }`}>
+              Changelog
+            </button>
           </div>
         </div>
         <button
@@ -1277,8 +1472,445 @@ export default function Admin() {
         </button>
       </header>
 
-      {activeTab === "companies" && <CompaniesTab pin={pin} />}
-      {activeTab === "prompts"   && <PromptsTab   pin={pin} />}
+      {activeTab === "companies"  && <CompaniesTab pin={pin} />}
+      {activeTab === "prompts"    && <PromptsTab   pin={pin} />}
+      {activeTab === "how-thesis" && <HowThesisWorksTab />}
+      {activeTab === "changelog"  && <ChangelogTab />}
+    </div>
+  );
+}
+
+// ── Changelog Tab ─────────────────────────────────────────────────────────────
+function ChangelogTab() {
+  const [data,    setData]    = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchChangelog()
+      .then(setData)
+      .catch(() => setData({ success: false }))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const REPO_COLOR: Record<string, string> = {
+    Backend : "bg-signal-blue-bg text-signal-blue border-signal-blue/20",
+    Frontend: "bg-signal-amber-bg text-signal-amber border-signal-amber/20",
+  };
+
+  // Strip conventional commit prefixes for cleaner display
+  const cleanMsg = (msg: string) =>
+    msg.replace(/^(feat|fix|chore|docs|refactor|style|test|perf)(\([^)]+\))?:\s*/i, "");
+
+  return (
+    <div className="flex-1 overflow-auto p-5 max-w-3xl mx-auto w-full">
+      <div className="mb-4">
+        <h2 className="text-sm font-bold text-text-primary">Changelog</h2>
+        <p className="text-xs text-text-muted mt-0.5">Auto-generated from git history — Backend + Frontend</p>
+      </div>
+
+      {loading && (
+        <div className="space-y-4">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="animate-pulse space-y-2">
+              <div className="h-3 bg-muted rounded w-24" />
+              <div className="card-base p-3 space-y-2">
+                <div className="h-2.5 bg-muted rounded w-full" />
+                <div className="h-2.5 bg-muted rounded w-3/4" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!loading && !data?.success && (
+        <div className="card-base p-4 text-center">
+          <p className="text-xs text-signal-amber">⚠ Could not load changelog — git may not be available</p>
+        </div>
+      )}
+
+      {!loading && data?.success && (
+        <div className="space-y-5">
+          {Object.entries(data.grouped as Record<string, any[]>).map(([date, entries]) => (
+            <div key={date}>
+              <p className="text-2xs font-bold text-text-muted uppercase tracking-wider mb-2">{date}</p>
+              <div className="card-base divide-y divide-border/50">
+                {entries.map((e: any) => (
+                  <div key={e.hash} className="px-3 py-2 flex items-start gap-2.5">
+                    <span className={`flex-shrink-0 text-2xs font-bold px-1.5 py-0.5 rounded border mt-0.5 ${REPO_COLOR[e.repo] || "bg-muted text-text-muted border-border"}`}>
+                      {e.repo}
+                    </span>
+                    <span className="text-xs text-text-primary leading-snug">{cleanMsg(e.message)}</span>
+                    <span className="ml-auto flex-shrink-0 text-2xs text-text-muted font-mono">{e.hash.slice(0, 7)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          <p className="text-2xs text-text-muted text-center pt-2">Showing last {data.total} commits across both repos</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── How Thesis Works Tab ──────────────────────────────────────────────────────
+function HowThesisWorksTab() {
+  return (
+    <div className="flex-1 overflow-auto p-5 space-y-6 max-w-3xl mx-auto w-full">
+
+      {/* Header */}
+      <div>
+        <h2 className="text-base font-bold text-text-primary">How the Thesis System Works</h2>
+        <p className="text-xs text-text-muted mt-1">
+          End-to-end pipeline — from Google Sheet entry to the BUY/HOLD/WEAK verdict.
+          Uses <strong className="text-text-secondary">Manorama Q3 FY26</strong> as a live worked example throughout.
+        </p>
+      </div>
+
+      {/* ── Step 1: Data Sources ── */}
+      <section className="card-base p-5 space-y-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-full bg-signal-blue-bg text-signal-blue text-xs font-black flex items-center justify-center border border-signal-blue/20">1</div>
+          <h3 className="text-sm font-bold text-text-primary">Where does the data come from?</h3>
+        </div>
+        <p className="text-xs text-text-secondary leading-relaxed">
+          Every insight is built from exactly <strong className="text-text-primary">two PDFs</strong> filed with BSE — nothing else. No web scraping, no financial databases, no news.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[
+            {
+              icon: "📄",
+              label: "Investor Presentation (PPT)",
+              color: "bg-signal-blue-bg border-signal-blue/20 text-signal-blue",
+              points: ["Capex plans with project names & MTPA capacities", "Revenue guidance numbers", "Margin KPIs (EBITDA %, PAT %)", "Volume vs pricing split"],
+              example: "Manorama PPT: ₹460 Cr capex, FY26 guidance ₹1,300 Cr, EBITDA 27.2%"
+            },
+            {
+              icon: "🎙️",
+              label: "Earnings Call Transcript",
+              color: "bg-signal-green-bg border-signal-green/20 text-signal-green",
+              points: ["Management tone — confident / cautious / defensive", "Q&A reveals what management avoided saying", "Verbatim quotes used as evidence", "Funding clarity (internal vs debt)"],
+              example: "Manorama Concall: \u201cWe rely primarily on internal cash accruals\u2026 already spent \u20b952 Cr\u201d"
+            },
+          ].map((s) => (
+            <div key={s.label} className={`rounded-xl p-4 border space-y-2 ${s.color}`}>
+              <div className="flex items-center gap-2">
+                <span className="text-lg">{s.icon}</span>
+                <span className="text-xs font-bold text-text-primary">{s.label}</span>
+              </div>
+              <ul className="space-y-1">
+                {s.points.map((p, i) => (
+                  <li key={i} className="text-2xs text-text-secondary flex items-start gap-1.5">
+                    <span className="text-text-muted mt-0.5">·</span>{p}
+                  </li>
+                ))}
+              </ul>
+              <div className="rounded-lg bg-card/60 px-3 py-2 border border-border">
+                <p className="text-2xs text-text-muted font-semibold uppercase tracking-wider mb-0.5">Example from Manorama</p>
+                <p className="text-2xs text-text-secondary italic">"{s.example}"</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="rounded-xl bg-muted/60 px-4 py-3 border border-border space-y-1.5">
+          <p className="text-2xs font-bold text-text-secondary uppercase tracking-wider">Also required (from Google Sheet)</p>
+          <div className="flex flex-wrap gap-3">
+            {["NSE Symbol (e.g. MANORAMA)", "Quarter (e.g. Q3 FY26)", "Market Cap in ₹ Cr (e.g. 7,523)", "BSE PDF URLs for both documents"].map((item) => (
+              <span key={item} className="text-2xs text-text-secondary bg-card border border-border rounded-lg px-2.5 py-1">{item}</span>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Step 2: AI Extraction ── */}
+      <section className="card-base p-5 space-y-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-full bg-signal-blue-bg text-signal-blue text-xs font-black flex items-center justify-center border border-signal-blue/20">2</div>
+          <h3 className="text-sm font-bold text-text-primary">What does the AI extract?</h3>
+        </div>
+        <p className="text-xs text-text-secondary leading-relaxed">
+          Three separate Claude API calls run on the PDF text. Each has a specific job.
+        </p>
+        <div className="space-y-3">
+          {[
+            {
+              call: "Call 1",
+              title: "3 Parameters — scored 0–5 each",
+              icon: "⚡",
+              color: "border-signal-amber/30 bg-signal-amber-bg/20",
+              badge: "text-signal-amber",
+              desc: "Extracts Capex, Revenue Growth, and Margin Outlook with KPIs, evidence quotes, and a score.",
+              manorama: "Capex 5/5 (₹460 Cr, 4 projects), Revenue 5/5 (guidance raised to ₹1,300 Cr), Margins 4/5 (EBITDA 27.2%, stable)"
+            },
+            {
+              call: "Call 2",
+              title: "6 Thesis Checks + Management Tone",
+              icon: "🎯",
+              color: "border-signal-blue/30 bg-signal-blue-bg/20",
+              badge: "text-signal-blue",
+              desc: "Answers 6 investment thesis questions (YES/PARTIAL/NO) and classifies management tone.",
+              manorama: "5 YES + 1 PARTIAL (market share has no peer data). Tone: CONFIDENT"
+            },
+            {
+              call: "Call 3",
+              title: "Forward Valuation Estimate",
+              icon: "📊",
+              color: "border-signal-green/30 bg-signal-green-bg/20",
+              badge: "text-signal-green",
+              desc: "Builds FY+1 and FY+2 revenue/PAT estimates, computes PE range and PEG.",
+              manorama: "FY27: ₹1,625–1,755 Cr revenue, ₹285–325 Cr PAT. PE 18.4–26.4x. PEG 0.78x → Undervalued"
+            },
+          ].map((c) => (
+            <div key={c.call} className={`rounded-xl border p-4 space-y-2 ${c.color}`}>
+              <div className="flex items-center gap-2">
+                <span className="text-sm">{c.icon}</span>
+                <span className={`text-2xs font-bold px-2 py-0.5 rounded-full bg-card ${c.badge}`}>{c.call}</span>
+                <span className="text-xs font-bold text-text-primary">{c.title}</span>
+              </div>
+              <p className="text-2xs text-text-secondary leading-relaxed">{c.desc}</p>
+              <div className="rounded-lg bg-card/70 px-3 py-2 border border-border">
+                <p className="text-2xs text-text-muted font-semibold uppercase tracking-wider mb-0.5">Manorama Q3 FY26 output</p>
+                <p className="text-2xs text-text-primary font-medium">{c.manorama}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="rounded-xl bg-muted/50 border border-border px-4 py-3">
+          <p className="text-2xs text-text-muted">
+            <strong className="text-text-secondary">Model:</strong> Claude Haiku ·
+            <strong className="text-text-secondary ml-2">Cost:</strong> ~₹2 per company per quarter ·
+            <strong className="text-text-secondary ml-2">Input:</strong> First 12,000 chars of each PDF
+          </p>
+        </div>
+      </section>
+
+      {/* ── Step 3: Scoring ── */}
+      <section className="card-base p-5 space-y-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-full bg-signal-blue-bg text-signal-blue text-xs font-black flex items-center justify-center border border-signal-blue/20">3</div>
+          <h3 className="text-sm font-bold text-text-primary">How is the composite score calculated?</h3>
+        </div>
+
+        <div className="rounded-xl bg-muted/50 border border-border overflow-hidden">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-border bg-muted/80">
+                <th className="text-left px-4 py-2.5 font-bold text-text-primary">Signal</th>
+                <th className="text-center px-4 py-2.5 font-bold text-text-primary">Weight</th>
+                <th className="text-center px-4 py-2.5 font-bold text-text-primary">Manorama Score</th>
+                <th className="text-right px-4 py-2.5 font-bold text-text-primary">Contribution</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { icon: "📈", label: "Revenue Growth", weight: "40%", score: "5/5", contrib: "2.00", color: "text-signal-green" },
+                { icon: "📊", label: "Margin Outlook",  weight: "30%", score: "4/5", contrib: "1.20", color: "text-signal-amber" },
+                { icon: "🏗️", label: "Capex & Expansion", weight: "30%", score: "5/5", contrib: "1.50", color: "text-signal-green" },
+              ].map((r) => (
+                <tr key={r.label} className="border-b border-border/50 last:border-0">
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span>{r.icon}</span>
+                      <span className="font-medium text-text-primary">{r.label}</span>
+                    </div>
+                  </td>
+                  <td className="text-center px-4 py-2.5 text-text-secondary">{r.weight}</td>
+                  <td className={`text-center px-4 py-2.5 font-bold ${r.color}`}>{r.score}</td>
+                  <td className={`text-right px-4 py-2.5 font-bold ${r.color}`}>{r.contrib}</td>
+                </tr>
+              ))}
+              <tr className="bg-signal-green-bg border-t-2 border-signal-green/30">
+                <td colSpan={3} className="px-4 py-3 text-xs font-extrabold text-text-primary">Composite Score</td>
+                <td className="text-right px-4 py-3 text-lg font-black text-signal-green">4.7 / 5</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p className="text-xs text-text-secondary leading-relaxed">
+          Revenue growth is weighted highest (40%) because forward guidance is the strongest predictor of near-term re-rating.
+          Margins (30%) and Capex (30%) determine whether the growth is sustainable and being invested back into the business.
+        </p>
+
+        {/* Score tags */}
+        <div>
+          <p className="text-2xs font-bold text-text-muted uppercase tracking-wider mb-2">Score tags (what Claude uses to grade each signal)</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {[
+              {
+                label: "Capex tags",
+                items: [
+                  { tag: "Aggressive Expansion", score: "5", color: "text-signal-green" },
+                  { tag: "Moderate Expansion",   score: "4", color: "text-signal-green" },
+                  { tag: "Maintenance Only",     score: "2", color: "text-signal-amber" },
+                  { tag: "Capex Pause",          score: "1", color: "text-signal-red"   },
+                  { tag: "Capex Reduction",      score: "0", color: "text-signal-red"   },
+                ],
+              },
+              {
+                label: "Revenue tags",
+                items: [
+                  { tag: "Strong Growth Guidance", score: "5", color: "text-signal-green" },
+                  { tag: "Moderate Growth",        score: "4", color: "text-signal-green" },
+                  { tag: "Flat Outlook",           score: "2", color: "text-signal-amber" },
+                  { tag: "Mixed Signals",          score: "2", color: "text-signal-amber" },
+                  { tag: "Negative Guidance",      score: "0", color: "text-signal-red"   },
+                ],
+              },
+              {
+                label: "Margin tags",
+                items: [
+                  { tag: "Margin Expansion Expected", score: "5", color: "text-signal-green" },
+                  { tag: "Stable Margins",            score: "4", color: "text-signal-green" },
+                  { tag: "Recovery in Margins",       score: "4", color: "text-signal-green" },
+                  { tag: "Margin Pressure",           score: "2", color: "text-signal-amber" },
+                  { tag: "Significant Margin Risk",   score: "0", color: "text-signal-red"   },
+                ],
+              },
+            ].map((col) => (
+              <div key={col.label} className="space-y-1">
+                <p className="text-2xs font-semibold text-text-muted">{col.label}</p>
+                {col.items.map((item) => (
+                  <div key={item.tag} className="flex items-center justify-between bg-muted/40 rounded-lg px-2.5 py-1.5">
+                    <span className="text-2xs text-text-secondary">{item.tag}</span>
+                    <span className={`text-2xs font-bold ${item.color}`}>{item.score}/5</span>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Verdict thresholds */}
+        <div>
+          <p className="text-2xs font-bold text-text-muted uppercase tracking-wider mb-2">Verdict thresholds</p>
+          <div className="flex gap-3">
+            {[
+              { emoji: "🟢", label: "BUY",  range: "4.0 and above", color: "bg-signal-green-bg border-signal-green/20 text-signal-green" },
+              { emoji: "🟡", label: "HOLD", range: "3.0 – 3.9",     color: "bg-signal-amber-bg border-signal-amber/20 text-signal-amber" },
+              { emoji: "🔴", label: "WEAK", range: "Below 3.0",      color: "bg-signal-red-bg   border-signal-red/20   text-signal-red"   },
+            ].map((v) => (
+              <div key={v.label} className={`flex-1 rounded-xl border px-3 py-2.5 text-center ${v.color}`}>
+                <p className="text-sm font-black">{v.emoji} {v.label}</p>
+                <p className="text-2xs mt-0.5 opacity-80">{v.range}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Step 4: The 6 Thesis Questions ── */}
+      <section className="card-base p-5 space-y-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-full bg-signal-blue-bg text-signal-blue text-xs font-black flex items-center justify-center border border-signal-blue/20">4</div>
+          <h3 className="text-sm font-bold text-text-primary">The 6 Investment Thesis Questions</h3>
+        </div>
+        <p className="text-xs text-text-secondary leading-relaxed">
+          Beyond the score, Claude answers 6 structured questions. Each answer is <span className="font-semibold text-signal-green">YES</span> / <span className="font-semibold text-signal-amber">PARTIAL</span> / <span className="font-semibold text-signal-red">NO</span> — backed by a direct quote from the source document.
+        </p>
+        <div className="space-y-2">
+          {[
+            { q: "q1", label: "Business model clear & defensible?",    manorama: { ans: "yes",     text: "Integrated specialty fats — backward sourcing + supercritical fractionation tech + CBA forward integration. B2B moat with developed formulations." } },
+            { q: "q2", label: "Sector outlook positive?",               manorama: { ans: "yes",     text: "Structurally undersupplied CBE/exotic fats market. Multi-sector demand: chocolate, cosmetics, HoReCa, pharma." } },
+            { q: "q3", label: "Company gaining market share?",          manorama: { ans: "partial", text: "40% revenue CAGR FY21–25, capacity 15K→40K MTPA. But NO explicit peer data or absolute market share % shared." } },
+            { q: "q4", label: "2–3 year revenue visibility?",           manorama: { ans: "yes",     text: "₹1,300 Cr FY26 guidance raised. Debottlenecking adds 30% by FY26. New capex gives 4–5 year runway." } },
+            { q: "q5", label: "Committed structural capex?",            manorama: { ans: "yes",     text: "₹460 Cr over 2–3 yrs: CBA 75K MTPA, Fractionation 75K MTPA, Refinery 90K MTPA, Burkina Faso 90K MTPA." } },
+            { q: "q6", label: "Operating leverage visible?",            manorama: { ans: "yes",     text: "EBITDA +72 bps Q3, +352 bps 9M. PAT +471 bps Q3, +480 bps 9M. Value-added mix 75% → targeting 85–90%." } },
+          ].map((entry, i) => {
+            const ansColor = entry.manorama.ans === "yes" ? "text-signal-green bg-signal-green-bg border-signal-green/20"
+              : entry.manorama.ans === "partial" ? "text-signal-amber bg-signal-amber-bg border-signal-amber/20"
+              : "text-signal-red bg-signal-red-bg border-signal-red/20";
+            const icon = entry.manorama.ans === "yes" ? "✓" : entry.manorama.ans === "partial" ? "~" : "✕";
+            return (
+              <div key={entry.q} className="rounded-xl border border-border overflow-hidden">
+                <div className="flex items-center gap-3 px-4 py-2.5 bg-muted/30">
+                  <span className="text-2xs font-bold text-text-muted w-6">{entry.q}</span>
+                  <span className="text-xs font-semibold text-text-primary flex-1">{entry.label}</span>
+                  <span className={`text-2xs font-bold px-2 py-0.5 rounded-full border ${ansColor}`}>
+                    {icon} {entry.manorama.ans.charAt(0).toUpperCase() + entry.manorama.ans.slice(1)}
+                  </span>
+                </div>
+                <div className="px-4 py-2.5 border-t border-border/50 bg-card">
+                  <p className="text-2xs text-text-secondary leading-relaxed">{entry.manorama.text}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="rounded-xl border border-border bg-muted/30 px-4 py-3">
+          <p className="text-2xs font-bold text-text-muted uppercase tracking-wider mb-1.5">Management tone (separate classification)</p>
+          <div className="flex items-center gap-3">
+            <span className="text-2xs font-bold px-3 py-1 rounded-full bg-signal-green-bg text-signal-green border border-signal-green/20">● CONFIDENT</span>
+            <p className="text-2xs text-text-secondary italic flex-1">"This revision underscores our confidence in our growth trajectory and the strength of our business model."</p>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Step 5: Evidence Verification ── */}
+      <section className="card-base p-5 space-y-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-full bg-signal-blue-bg text-signal-blue text-xs font-black flex items-center justify-center border border-signal-blue/20">5</div>
+          <h3 className="text-sm font-bold text-text-primary">How is evidence verified?</h3>
+        </div>
+        <p className="text-xs text-text-secondary leading-relaxed">
+          Every quote extracted by Claude is automatically checked against the original PDF text.
+          This gives the confidence % shown on each company page.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {[
+            { label: "Exact match",      weight: "100%", desc: "Quote found verbatim in the PDF text",           color: "bg-signal-green-bg border-signal-green/20 text-signal-green" },
+            { label: "Fuzzy match",      weight: "85%",  desc: "Minor wording differences but same meaning",     color: "bg-signal-amber-bg border-signal-amber/20 text-signal-amber" },
+            { label: "Source confirmed", weight: "70%",  desc: "PPT source file confirmed, text hard to match",  color: "bg-muted border-border text-text-secondary" },
+          ].map((v) => (
+            <div key={v.label} className={`rounded-xl border p-4 space-y-1.5 ${v.color}`}>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-text-primary">{v.label}</span>
+                <span className="text-sm font-black">{v.weight}</span>
+              </div>
+              <p className="text-2xs text-text-secondary">{v.desc}</p>
+            </div>
+          ))}
+        </div>
+        <div className="rounded-xl bg-signal-green-bg border border-signal-green/20 px-4 py-3">
+          <p className="text-xs font-bold text-signal-green">Manorama Q3 FY26: High — 87% (9/9 verified)</p>
+          <p className="text-2xs text-text-secondary mt-1">6 concall quotes text-matched · 3 PPT quotes source-confirmed. No quote was invented or inferred.</p>
+        </div>
+      </section>
+
+      {/* ── Step 6: Same for all companies ── */}
+      <section className="card-base p-5 space-y-3">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-full bg-signal-blue-bg text-signal-blue text-xs font-black flex items-center justify-center border border-signal-blue/20">6</div>
+          <h3 className="text-sm font-bold text-text-primary">Does this work the same for every company?</h3>
+        </div>
+        <p className="text-xs text-text-secondary leading-relaxed">
+          Yes — the exact same 3 API calls, same scoring weights, same 6 thesis questions, same evidence verification. The only variables are the two PDFs and market cap from the Google Sheet.
+        </p>
+        <div className="space-y-2">
+          {[
+            { icon: "✓", text: "Same prompts for every company — no hand-tuning per sector", color: "text-signal-green" },
+            { icon: "✓", text: "Score is fully deterministic — given same PDFs, you get the same score", color: "text-signal-green" },
+            { icon: "✓", text: "Valuation only computed when market cap is provided in the sheet", color: "text-signal-green" },
+            { icon: "~", text: "Confidence % varies — depends on how much verbatim text is in the PDF", color: "text-signal-amber" },
+            { icon: "~", text: "q3 (market share) is often PARTIAL — most companies don't share peer comparisons", color: "text-signal-amber" },
+          ].map((item, i) => (
+            <div key={i} className="flex items-start gap-2.5">
+              <span className={`text-xs font-bold mt-0.5 flex-shrink-0 ${item.color}`}>{item.icon}</span>
+              <p className="text-xs text-text-secondary">{item.text}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="rounded-xl bg-muted/50 border border-border px-4 py-3 space-y-1">
+          <p className="text-2xs font-bold text-text-muted uppercase tracking-wider">Full pipeline summary</p>
+          <p className="text-2xs text-text-secondary leading-relaxed">
+            Google Sheet row → Download 2 BSE PDFs → Extract text → 3 Claude API calls →
+            Score (weighted avg) → Verify evidence → Save to cache →
+            Display verdict + 6 thesis checks + forward valuation
+          </p>
+        </div>
+      </section>
+
     </div>
   );
 }
