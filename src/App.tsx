@@ -20,11 +20,26 @@ function ScrollToTop() {
   return null;
 }
 
+// Catch Supabase tokens that land on any page (e.g. root) instead of /auth/callback
+// This happens when FRONTEND_URL is not set on the backend and Supabase falls back to Site URL
+function AuthHashCatcher() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    if (hash && hash.includes("access_token=") && pathname !== "/auth/callback") {
+      window.location.replace("/auth/callback" + hash);
+    }
+  }, [pathname]);
+  return null;
+}
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <AuthProvider>
       <BrowserRouter>
         <ScrollToTop />
+        <AuthHashCatcher />
         <MarketTicker />
         <Routes>
           <Route path="/" element={<Dashboard />} />
