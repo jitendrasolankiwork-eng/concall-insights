@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import CompanyCard from "@/components/CompanyCard";
 import ThemeToggle from "@/components/ThemeToggle";
+import AuthButton from "@/components/AuthButton";
 import { AnnouncementsSection } from "@/components/AnnouncementsSection";
 import { fetchCompany } from "@/lib/api";
 import type { CompanyInsight } from "@/types/portfolio";
@@ -256,6 +257,7 @@ export default function Dashboard() {
               {loading ? "…" : `${filtered.length} companies`}
             </span>
             <ThemeToggle />
+            <AuthButton />
           </div>
         </div>
       </header>
