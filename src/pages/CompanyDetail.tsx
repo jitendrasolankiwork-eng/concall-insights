@@ -1,6 +1,6 @@
 import { useParams, Link, useSearchParams } from "react-router-dom";
 import { useState, useEffect, type ReactNode } from "react";
-import { fetchCompany, fetchCompanyByQuarter, fetchAvailableQuarters } from "@/lib/api";
+import { fetchCompany, fetchCompanyByQuarter, fetchAvailableQuarters, fetchRecentAnnouncements, type RecentAnnouncement } from "@/lib/api";
 import ValuationSection from "@/components/ValuationSection";
 import ThemeToggle from "@/components/ThemeToggle";
 import { FundamentalsTab }   from "@/components/FundamentalsTab";
@@ -446,6 +446,15 @@ export default function CompanyDetail() {
   const [marketCap,          setMarketCap]          = useState<number | null>(null);
   const [valuationEstimate,  setValuationEstimate]  = useState<any>(null);
 
+  // Critical announcements (P5) for this company — shown as alert banner
+  const [criticalAnns, setCriticalAnns] = useState<RecentAnnouncement[]>([]);
+
+  useEffect(() => {
+    if (!sym) return;
+    fetchRecentAnnouncements(5, 10)
+      .then((data) => setCriticalAnns(data.filter((a) => a.symbol === sym.toUpperCase())));
+  }, [sym]);
+
   // Live price state — polled independently every 60s
   const [livePrice,      setLivePrice]      = useState<number | null>(null);
   const [livePricePct,   setLivePricePct]   = useState<number | null>(null);
@@ -657,6 +666,25 @@ export default function CompanyDetail() {
       </header>
 
       <main className="container py-4 space-y-4">
+
+        {/* Critical announcement alert banners (P5 only) */}
+        {criticalAnns.map((ann) => (
+          <div key={ann.id}
+            className="flex items-start gap-3 p-3 rounded-xl"
+            style={{ background: "rgba(248,113,113,0.07)", border: "1px solid rgba(248,113,113,0.3)" }}>
+            <span className="text-lg flex-shrink-0 mt-0.5">🔴</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-2xs font-bold text-signal-red uppercase tracking-wide mb-0.5">
+                Critical Update · {ann.signal.type}
+              </p>
+              <p className="text-sm font-semibold text-text-primary leading-snug">{ann.signal.summary}</p>
+              <p className="text-xs text-text-secondary mt-0.5">{ann.signal.impactExplanation}</p>
+            </div>
+            <span className="text-2xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 bg-signal-red-bg text-signal-red whitespace-nowrap">
+              {ann.signal.action}
+            </span>
+          </div>
+        ))}
 
         {/* Quarter selector — only show on Insights tab */}
         {quarters.length > 1 && activeTab === "insights" && (

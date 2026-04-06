@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import CompanyCard from "@/components/CompanyCard";
 import ThemeToggle from "@/components/ThemeToggle";
+import { AnnouncementsSection } from "@/components/AnnouncementsSection";
 import { fetchCompany } from "@/lib/api";
 import type { CompanyInsight } from "@/types/portfolio";
 
@@ -263,6 +264,11 @@ export default function Dashboard() {
 
         {/* Portfolio strip */}
         {!loading && <PortfolioStrip companies={companies} />}
+
+        {/* Announcements feed — tracked companies only */}
+        {!loading && companies.length > 0 && (
+          <AnnouncementsSection symbols={companies.map((c) => c.ticker)} />
+        )}
 
         {/* Sort + Filter bar */}
         {!loading && companies.length > 0 && (
