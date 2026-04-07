@@ -1139,7 +1139,7 @@ function CompaniesTab({ pin }: { pin: string }) {
         {!loading && (
           <div className="flex-1 overflow-y-auto">
             {/* Column headers */}
-            <div className="sticky top-0 z-10 bg-muted border-b border-border grid grid-cols-[120px_1fr_88px_120px_80px_90px_110px_auto] gap-3 px-5 py-2.5 items-center">
+            <div className="sticky top-0 z-10 bg-muted border-b border-border grid grid-cols-[110px_160px_80px_110px_72px_80px_130px_auto] gap-3 px-5 py-2.5 items-center">
               {["Symbol", "Company", "Quarter", "Status", "Priority", "MCap ₹Cr", "Processed", ""].map((h) => (
                 <span key={h} className="text-xs font-bold text-text-muted uppercase tracking-wider truncate">{h}</span>
               ))}
@@ -1154,7 +1154,7 @@ function CompaniesTab({ pin }: { pin: string }) {
               rows.map((row, i) => (
                 <div
                   key={`${row.rowIndex}-${row.symbol}-${row.quarter}`}
-                  className={`grid grid-cols-[120px_1fr_88px_120px_80px_90px_110px_auto] gap-3 items-center px-5 py-2.5 transition-colors ${
+                  className={`grid grid-cols-[110px_160px_80px_110px_72px_80px_130px_auto] gap-3 items-center px-5 py-2.5 transition-colors ${
                     selectedRow?.rowIndex === row.rowIndex ? "bg-signal-blue-bg/30" : "hover:bg-muted/40"
                   } ${i < rows.length - 1 ? "border-b border-border" : ""}`}
                 >
@@ -1508,53 +1508,7 @@ export default function Admin() {
         <div className="flex items-center gap-3">
           <Link to="/" className="text-text-muted hover:text-text-primary transition-colors text-sm leading-none">←</Link>
           <div className="w-px h-4 bg-border" />
-          <span className="text-2xs text-text-muted">Admin</span>
-          <span className="text-2xs text-text-muted">/</span>
-
-          {/* Tab switcher */}
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setActiveTab("companies")}
-              className={`text-xs font-semibold px-3 py-1 rounded-lg transition-all ${
-                activeTab === "companies"
-                  ? "bg-signal-blue-bg text-signal-blue"
-                  : "text-text-muted hover:text-text-primary hover:bg-muted"
-              }`}>
-              Companies
-            </button>
-            <button
-              onClick={() => setActiveTab("prompts")}
-              className={`text-xs font-semibold px-3 py-1 rounded-lg transition-all ${
-                activeTab === "prompts"
-                  ? "bg-signal-blue-bg text-signal-blue"
-                  : "text-text-muted hover:text-text-primary hover:bg-muted"
-              }`}>
-              Prompts
-              {promptCustomCount > 0 && (
-                <span className="ml-1.5 text-2xs font-bold px-1.5 py-0.5 rounded-full bg-signal-amber-bg text-signal-amber border border-signal-amber/20">
-                  {promptCustomCount}
-                </span>
-              )}
-            </button>
-            <button
-              onClick={() => setActiveTab("how-thesis")}
-              className={`text-xs font-semibold px-3 py-1 rounded-lg transition-all ${
-                activeTab === "how-thesis"
-                  ? "bg-signal-green-bg text-signal-green"
-                  : "text-text-muted hover:text-text-primary hover:bg-muted"
-              }`}>
-              How Thesis Works
-            </button>
-            <button
-              onClick={() => setActiveTab("changelog")}
-              className={`text-xs font-semibold px-3 py-1 rounded-lg transition-all ${
-                activeTab === "changelog"
-                  ? "bg-signal-blue-bg text-signal-blue"
-                  : "text-text-muted hover:text-text-primary hover:bg-muted"
-              }`}>
-              Changelog
-            </button>
-          </div>
+          <span className="text-xs font-bold text-text-primary">Admin</span>
         </div>
         <button
           onClick={() => { sessionStorage.removeItem("adminPin"); setPin(null); }}
@@ -1563,10 +1517,43 @@ export default function Admin() {
         </button>
       </header>
 
-      {activeTab === "companies"  && <CompaniesTab pin={pin} />}
-      {activeTab === "prompts"    && <PromptsTab   pin={pin} />}
-      {activeTab === "how-thesis" && <HowThesisWorksTab />}
-      {activeTab === "changelog"  && <ChangelogTab />}
+      {/* Body: sidebar + content */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* Left sidebar nav */}
+        <nav className="w-44 flex-shrink-0 bg-card border-r border-border flex flex-col py-3 gap-0.5 px-2">
+          {([
+            { key: "companies",  label: "Companies",       icon: "⊞" },
+            { key: "prompts",    label: "Prompts",         icon: "✎", badge: promptCustomCount > 0 ? promptCustomCount : null },
+            { key: "how-thesis", label: "How Thesis Works",icon: "?" },
+            { key: "changelog",  label: "Changelog",       icon: "⏱" },
+          ] as const).map(({ key, label, icon, badge }) => (
+            <button key={key}
+              onClick={() => setActiveTab(key)}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left transition-all text-xs font-semibold ${
+                activeTab === key
+                  ? "bg-signal-blue-bg text-signal-blue"
+                  : "text-text-muted hover:text-text-primary hover:bg-muted"
+              }`}>
+              <span className="text-sm leading-none">{icon}</span>
+              <span className="flex-1">{label}</span>
+              {badge && (
+                <span className="text-2xs font-bold px-1.5 py-0.5 rounded-full bg-signal-amber-bg text-signal-amber border border-signal-amber/20">
+                  {badge}
+                </span>
+              )}
+            </button>
+          ))}
+        </nav>
+
+        {/* Main content */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {activeTab === "companies"  && <CompaniesTab pin={pin} />}
+          {activeTab === "prompts"    && <PromptsTab   pin={pin} />}
+          {activeTab === "how-thesis" && <HowThesisWorksTab />}
+          {activeTab === "changelog"  && <ChangelogTab />}
+        </div>
+      </div>
     </div>
   );
 }
