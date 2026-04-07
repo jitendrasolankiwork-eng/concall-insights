@@ -771,10 +771,22 @@ function ReprocessModal({
           const detail = resp.result
             ? `score: ${resp.result.score ?? "—"}`
             : resp.error || "failed";
+          const finalStatus = resp.success ? "done" : "error";
           setResults(prev => prev.map(r => r.symbol === sym
-            ? { ...r, status: resp.success ? "done" : "error", detail }
+            ? { ...r, status: finalStatus, detail }
             : r
           ));
+
+          // Update all sheet rows for this symbol to processed/error
+          for (const row of symRows) {
+            try {
+              await updateSheetRow(pin, row.rowIndex, {
+                ...row,
+                status      : resp.success ? "processed" : "error",
+                forceRefresh: false,
+              });
+            } catch { /* non-critical */ }
+          }
         } catch (err: any) {
           addLog(`❌ ${err.message}`);
           setResults(prev => prev.map(r => r.symbol === sym
