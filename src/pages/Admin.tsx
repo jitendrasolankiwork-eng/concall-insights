@@ -699,7 +699,7 @@ function SetupBanner() {
 }
 
 // ── Reprocess Modal ───────────────────────────────────────────────────────────
-type SymbolResult = { symbol: string; status: "pending" | "processing" | "done" | "error"; detail: string };
+type SymbolResult = { symbol: string; quarter: string; status: "pending" | "processing" | "done" | "error"; detail: string };
 
 function ReprocessModal({
   rows, pin, onClose, onDone,
@@ -723,10 +723,8 @@ function ReprocessModal({
   const selectNone    = () => setSelected(new Set());
   const selectPending = () => setSelected(new Set(rows.filter(r => r.status !== "processed").map(rowKey)));
 
-  // Unique symbols of selected rows
-  const selectedSymbols = Array.from(new Set(
-    rows.filter(r => selected.has(rowKey(r))).map(r => r.symbol)
-  ));
+  // All selected rows (one entry per quarter — no deduplication)
+  const selectedRows = rows.filter(r => selected.has(rowKey(r)));
 
   const done   = results.filter(r => r.status === "done").length;
   const errors = results.filter(r => r.status === "error").length;
@@ -739,79 +737,77 @@ function ReprocessModal({
   const addLog = (msg: string) => setLogs(prev => [...prev, msg]);
 
   const start = async () => {
-    const syms = selectedSymbols;
-    setResults(syms.map(s => ({ symbol: s, status: "pending" as const, detail: "" })));
+    const rowsToProcess = selectedRows; // snapshot before state changes
+    setResults(rowsToProcess.map(r => ({
+      symbol : r.symbol,
+      quarter: r.quarterRaw || r.quarter,
+      status : "pending" as const,
+      detail : "",
+    })));
     setLogs([]);
     setPhase("running");
 
-    for (let i = 0; i < syms.length; i++) {
+    for (let i = 0; i < rowsToProcess.length; i++) {
       if (cancelled.current) break;
-      const sym = syms[i];
+      const row = rowsToProcess[i];
+      const sym = row.symbol;
+      const quarter = row.quarterRaw || row.quarter;
       setCurrent(i);
-      setResults(prev => prev.map(r => r.symbol === sym ? { ...r, status: "processing" } : r));
+      setResults(prev => prev.map(r =>
+        r.symbol === sym && r.quarter === quarter ? { ...r, status: "processing" } : r
+      ));
 
-      // Find the row for this symbol to get PDF URLs
-      const symRows = rows.filter(r => r.symbol === sym);
-
-      // Try streaming first (uses processAdminCompanyStream with live logs)
-      // Fall back to processSymbol (sheet-based) if no URLs available
-      const firstRow = symRows[0];
-      if (firstRow?.concallUrl || firstRow?.pptUrl) {
+      if (row.concallUrl || row.pptUrl) {
         try {
-          addLog(`\n── ${sym} ──`);
+          addLog(`\n── ${sym} ${quarter} ──`);
           const resp = await processAdminCompanyStream(pin, {
             symbol     : sym,
-            companyName: firstRow.companyName,
-            quarter    : firstRow.quarterRaw || firstRow.quarter,
-            concallUrl : firstRow.concallUrl || "",
-            pptUrl     : firstRow.pptUrl     || undefined,
-            marketCap  : firstRow.marketCap  || undefined,
+            companyName: row.companyName,
+            quarter    : quarter,
+            concallUrl : row.concallUrl || "",
+            pptUrl     : row.pptUrl     || undefined,
+            marketCap  : row.marketCap  || undefined,
           }, addLog);
 
           const detail = resp.result
             ? `score: ${resp.result.score ?? "—"}`
             : resp.error || "failed";
           const finalStatus = resp.success ? "done" : "error";
-          setResults(prev => prev.map(r => r.symbol === sym
-            ? { ...r, status: finalStatus, detail }
-            : r
+          setResults(prev => prev.map(r =>
+            r.symbol === sym && r.quarter === quarter ? { ...r, status: finalStatus, detail } : r
           ));
 
-          // Update all sheet rows for this symbol to processed/error
-          for (const row of symRows) {
-            try {
-              await updateSheetRow(pin, row.rowIndex, {
-                ...row,
-                status      : resp.success ? "processed" : "error",
-                forceRefresh: false,
-              });
-            } catch { /* non-critical */ }
-          }
+          try {
+            await updateSheetRow(pin, row.rowIndex, {
+              ...row,
+              status      : resp.success ? "processed" : "error",
+              forceRefresh: false,
+            });
+          } catch { /* non-critical */ }
         } catch (err: any) {
           addLog(`❌ ${err.message}`);
-          setResults(prev => prev.map(r => r.symbol === sym
-            ? { ...r, status: "error", detail: err.message }
-            : r
+          setResults(prev => prev.map(r =>
+            r.symbol === sym && r.quarter === quarter ? { ...r, status: "error", detail: err.message } : r
           ));
         }
       } else {
         // Fallback: sheet-based processing (no live logs)
         try {
-          addLog(`\n── ${sym} (sheet mode) ──`);
+          addLog(`\n── ${sym} ${quarter} (sheet mode) ──`);
           const resp = await processSymbol(pin, sym);
           const detail = resp.result?.details?.map((d: any) =>
             `${d.quarter ?? ""} → ${d.status}${d.score != null ? ` (${d.score})` : ""}`
           ).join(" · ") || (resp.success ? "done" : resp.error || "error");
           addLog(detail);
-          setResults(prev => prev.map(r => r.symbol === sym
-            ? { ...r, status: resp.success ? "done" : "error", detail }
-            : r
+          setResults(prev => prev.map(r =>
+            r.symbol === sym && r.quarter === quarter
+              ? { ...r, status: resp.success ? "done" : "error", detail }
+              : r
           ));
         } catch (err: any) {
           addLog(`❌ ${err.message}`);
-          setResults(prev => prev.map(r => r.symbol === sym
-            ? { ...r, status: "error", detail: err.message }
-            : r
+          setResults(prev => prev.map(r =>
+            r.symbol === sym && r.quarter === quarter ? { ...r, status: "error", detail: err.message } : r
           ));
         }
       }
@@ -834,9 +830,9 @@ function ReprocessModal({
             </h3>
             <p className="text-xs text-text-muted mt-0.5">
               {phase === "confirm"
-                ? `${selected.size} row${selected.size !== 1 ? "s" : ""} selected across ${selectedSymbols.length} compan${selectedSymbols.length !== 1 ? "ies" : "y"}`
+                ? `${selected.size} row${selected.size !== 1 ? "s" : ""} selected`
                 : phase === "running"
-                ? `${done}/${selectedSymbols.length} done${errors > 0 ? ` · ${errors} errors` : ""}`
+                ? `${done}/${selectedRows.length} done${errors > 0 ? ` · ${errors} errors` : ""}`
                 : `Complete — ${done} processed, ${errors} failed`}
             </p>
           </div>
@@ -907,7 +903,7 @@ function ReprocessModal({
 
             {/* Cost estimate */}
             <p className="text-xs text-text-muted">
-              ~₹{(selectedSymbols.length * 2.7).toFixed(0)} estimated cost for {selectedSymbols.length} compan{selectedSymbols.length !== 1 ? "ies" : "y"} · ~{selectedSymbols.length * 3}–{selectedSymbols.length * 4} min
+              ~₹{(selectedRows.length * 2.7).toFixed(0)} estimated cost for {selectedRows.length} row{selectedRows.length !== 1 ? "s" : ""} · ~{selectedRows.length * 3}–{selectedRows.length * 4} min
             </p>
 
             <div className="flex gap-2 pt-1">
@@ -915,9 +911,9 @@ function ReprocessModal({
                 className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-muted text-text-secondary hover:bg-border transition-all">
                 Cancel
               </button>
-              <button onClick={start} disabled={selectedSymbols.length === 0}
+              <button onClick={start} disabled={selectedRows.length === 0}
                 className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-signal-blue text-card hover:opacity-90 transition-all disabled:opacity-40">
-                Process {selectedSymbols.length > 0 ? `${selectedSymbols.length} Compan${selectedSymbols.length !== 1 ? "ies" : "y"}` : ""} →
+                Process {selectedRows.length > 0 ? `${selectedRows.length} Row${selectedRows.length !== 1 ? "s" : ""}` : ""} →
               </button>
             </div>
           </div>
@@ -930,18 +926,18 @@ function ReprocessModal({
             {/* Progress bar */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-xs text-text-muted">
-                <span>{phase === "running" ? `Processing ${selectedSymbols[current] ?? "…"}` : "All done"}</span>
-                <span>{done + errors} / {selectedSymbols.length}</span>
+                <span>{phase === "running" ? `Processing ${results[current]?.symbol ?? "…"} ${results[current]?.quarter ?? ""}` : "All done"}</span>
+                <span>{done + errors} / {results.length}</span>
               </div>
               <div className="h-2 bg-muted rounded-full overflow-hidden">
                 <div className="h-full bg-signal-blue rounded-full transition-all duration-500"
-                  style={{ width: `${((done + errors) / Math.max(selectedSymbols.length, 1)) * 100}%` }} />
+                  style={{ width: `${((done + errors) / Math.max(results.length, 1)) * 100}%` }} />
               </div>
             </div>
 
             {/* Per-company status pills */}
             <div className="flex flex-wrap gap-2">
-              {results.map((r) => {
+              {results.map((r, i) => {
                 const icon  = r.status === "done" ? "✓" : r.status === "error" ? "✕" : r.status === "processing" ? "⟳" : "○";
                 const cls   = r.status === "done"
                   ? "bg-signal-green-bg text-signal-green border-signal-green/20"
@@ -951,9 +947,9 @@ function ReprocessModal({
                   ? "bg-signal-blue-bg text-signal-blue border-signal-blue/20"
                   : "bg-muted text-text-muted border-border";
                 return (
-                  <span key={r.symbol}
+                  <span key={`${r.symbol}__${r.quarter}__${i}`}
                     className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full border ${cls} ${r.status === "processing" ? "animate-pulse" : ""}`}>
-                    <span>{icon}</span>{r.symbol}
+                    <span>{icon}</span>{r.symbol} <span className="font-normal">{r.quarter}</span>
                     {r.detail && r.status !== "processing" && (
                       <span className="font-normal opacity-70">· {r.detail}</span>
                     )}
