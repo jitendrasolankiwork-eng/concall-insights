@@ -5,7 +5,8 @@ import {
   fetchSheetRows, addSheetRow, updateSheetRow, deleteSheetRow, processSymbol,
   fetchWriterSetup, bseLookup, bseFilings, fetchChangelog,
   processAdminCompanyStream,
-  type SheetRowInput,
+  fetchHealth, runHealthCheck,
+  type SheetRowInput, type HealthPayload, type HealthCheckResult,
 } from "@/lib/api";
 import { CompanySearch } from "@/components/CompanySearch";
 
@@ -1482,7 +1483,7 @@ function PromptsTab({ pin }: { pin: string }) {
 // ── Main Admin Page ───────────────────────────────────────────────────────────
 export default function Admin() {
   const [pin,       setPin]       = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"companies" | "prompts" | "how-thesis" | "changelog">("companies");
+  const [activeTab, setActiveTab] = useState<"companies" | "prompts" | "how-thesis" | "changelog" | "health">("companies");
   const [promptCustomCount, setPromptCustomCount] = useState(0);
 
   useEffect(() => {
@@ -1523,10 +1524,11 @@ export default function Admin() {
         {/* Left sidebar nav */}
         <nav className="w-44 flex-shrink-0 bg-card border-r border-border flex flex-col py-3 gap-0.5 px-2">
           {([
-            { key: "companies",  label: "Companies",       icon: "⊞" },
-            { key: "prompts",    label: "Prompts",         icon: "✎", badge: promptCustomCount > 0 ? promptCustomCount : null },
-            { key: "how-thesis", label: "How Thesis Works",icon: "?" },
-            { key: "changelog",  label: "Changelog",       icon: "⏱" },
+            { key: "companies",  label: "Companies",        icon: "⊞" },
+            { key: "prompts",    label: "Prompts",          icon: "✎", badge: promptCustomCount > 0 ? promptCustomCount : null },
+            { key: "health",     label: "Health Check",     icon: "♥" },
+            { key: "how-thesis", label: "How Thesis Works", icon: "?" },
+            { key: "changelog",  label: "Changelog",        icon: "⏱" },
           ] as const).map(({ key, label, icon, badge }) => (
             <button key={key}
               onClick={() => setActiveTab(key)}
@@ -1550,10 +1552,147 @@ export default function Admin() {
         <div className="flex-1 flex flex-col overflow-hidden">
           {activeTab === "companies"  && <CompaniesTab pin={pin} />}
           {activeTab === "prompts"    && <PromptsTab   pin={pin} />}
+          {activeTab === "health"     && <HealthTab    pin={pin} />}
           {activeTab === "how-thesis" && <HowThesisWorksTab />}
           {activeTab === "changelog"  && <ChangelogTab />}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Health Check Tab ──────────────────────────────────────────────────────────
+function HealthTab({ pin }: { pin: string }) {
+  const [data,    setData]    = useState<HealthPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+  const [error,   setError]   = useState<string | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    const result = await fetchHealth();
+    setData(result);
+    setLoading(false);
+  };
+
+  const runNow = async () => {
+    setRunning(true);
+    setError(null);
+    try {
+      const result = await runHealthCheck(pin);
+      setData(result);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const statusColor = (s: string) =>
+    s === "ok"    ? "text-signal-green bg-signal-green-bg border-signal-green/20" :
+    s === "warn"  ? "text-signal-amber bg-signal-amber-bg border-signal-amber/20" :
+                    "text-signal-red   bg-signal-red-bg   border-signal-red/20";
+
+  const statusIcon = (s: string) => s === "ok" ? "✓" : s === "warn" ? "⚠" : "✕";
+
+  const overallBg = (s: string) =>
+    s === "ok"   ? "bg-signal-green-bg border-signal-green/30" :
+    s === "warn" ? "bg-signal-amber-bg border-signal-amber/30" :
+                   "bg-signal-red-bg   border-signal-red/30";
+
+  const formatCheckedAt = (iso: string) => {
+    try {
+      return new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" });
+    } catch { return iso; }
+  };
+
+  const minutesAgo = (iso: string) => {
+    const diff = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+    if (diff < 1)   return "just now";
+    if (diff < 60)  return `${diff}m ago`;
+    if (diff < 1440) return `${Math.round(diff / 60)}h ago`;
+    return `${Math.round(diff / 1440)}d ago`;
+  };
+
+  return (
+    <div className="flex-1 overflow-auto p-5 max-w-3xl mx-auto w-full">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h2 className="text-sm font-bold text-text-primary">Health Check</h2>
+          <p className="text-xs text-text-muted mt-0.5">
+            Runs automatically at 9am IST daily · {data ? `Last checked ${minutesAgo(data.checkedAt)}` : "Never run"}
+          </p>
+        </div>
+        <button onClick={runNow} disabled={running}
+          className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-signal-blue text-card hover:opacity-90 transition-all disabled:opacity-50">
+          {running ? <span className="animate-spin">↻</span> : "▶"} {running ? "Running…" : "Run Now"}
+        </button>
+      </div>
+
+      {error && (
+        <div className="mb-4 px-3 py-2 rounded-lg bg-signal-red-bg border border-signal-red/20 text-xs text-signal-red">{error}</div>
+      )}
+
+      {loading && !data && (
+        <div className="space-y-3">
+          {[...Array(7)].map((_, i) => (
+            <div key={i} className="h-16 rounded-xl bg-muted animate-pulse" />
+          ))}
+        </div>
+      )}
+
+      {!loading && !data && (
+        <div className="text-center py-16">
+          <p className="text-sm text-text-muted">No health check run yet</p>
+          <p className="text-xs text-text-muted mt-1">Click "Run Now" to check all services</p>
+        </div>
+      )}
+
+      {data && (
+        <>
+          {/* Overall status banner */}
+          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border mb-4 ${overallBg(data.overallStatus)}`}>
+            <span className={`text-lg font-bold ${statusColor(data.overallStatus).split(" ")[0]}`}>
+              {statusIcon(data.overallStatus)}
+            </span>
+            <div>
+              <p className={`text-sm font-bold ${statusColor(data.overallStatus).split(" ")[0]}`}>
+                {data.overallStatus === "ok" ? "All systems operational" :
+                 data.overallStatus === "warn" ? "Some services are slow" :
+                 "One or more services are down"}
+              </p>
+              <p className="text-xs text-text-muted">{formatCheckedAt(data.checkedAt)}</p>
+            </div>
+          </div>
+
+          {/* Individual checks */}
+          <div className="space-y-2">
+            {data.results.map((r: HealthCheckResult) => (
+              <div key={r.key}
+                className="flex items-center gap-3 px-4 py-3 rounded-xl bg-card border border-border">
+                {/* Status badge */}
+                <span className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border ${statusColor(r.status)}`}>
+                  {statusIcon(r.status)}
+                </span>
+                {/* Label + detail */}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-text-primary">{r.label}</p>
+                  <p className="text-2xs text-text-muted truncate">{r.detail}</p>
+                </div>
+                {/* Latency */}
+                {r.latencyMs > 0 && (
+                  <span className={`flex-shrink-0 text-2xs font-semibold px-2 py-0.5 rounded-full border ${statusColor(r.status)}`}>
+                    {r.latencyMs}ms
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
