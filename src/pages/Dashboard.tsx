@@ -225,7 +225,7 @@ function sortCompanies(companies: CompanyInsight[], sort: SortKey): CompanyInsig
 // ── Dashboard ─────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { companies, loading, error, retry } = useAllCompanies();
-  const [sort,      setSort]      = useState<SortKey>("score");
+  const [sort,      setSort]      = useState<SortKey>("updated");
   const [filter,    setFilter]    = useState<FilterKey>("all");
   const [showModal, setShowModal] = useState(false);
 
