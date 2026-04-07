@@ -1654,19 +1654,26 @@ function HealthTab({ pin }: { pin: string }) {
       {data && (
         <>
           {/* Overall status banner */}
-          <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border mb-4 ${overallBg(data.overallStatus)}`}>
-            <span className={`text-lg font-bold ${statusColor(data.overallStatus).split(" ")[0]}`}>
-              {statusIcon(data.overallStatus)}
-            </span>
-            <div>
-              <p className={`text-sm font-bold ${statusColor(data.overallStatus).split(" ")[0]}`}>
-                {data.overallStatus === "ok" ? "All systems operational" :
-                 data.overallStatus === "warn" ? "Some services are slow" :
-                 "One or more services are down"}
-              </p>
-              <p className="text-xs text-text-muted">{formatCheckedAt(data.checkedAt)}</p>
-            </div>
-          </div>
+          {(() => {
+            const failing = data.results.filter(r => r.status === "error").map(r => r.label);
+            const warning = data.results.filter(r => r.status === "warn").map(r => r.label);
+            const summary = data.overallStatus === "ok"
+              ? "All systems operational"
+              : data.overallStatus === "error"
+              ? `Down: ${failing.join(", ")}`
+              : `Slow / misconfigured: ${warning.join(", ")}`;
+            return (
+              <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border mb-4 ${overallBg(data.overallStatus)}`}>
+                <span className={`text-lg font-bold ${statusColor(data.overallStatus).split(" ")[0]}`}>
+                  {statusIcon(data.overallStatus)}
+                </span>
+                <div>
+                  <p className={`text-sm font-bold ${statusColor(data.overallStatus).split(" ")[0]}`}>{summary}</p>
+                  <p className="text-xs text-text-muted">{formatCheckedAt(data.checkedAt)}</p>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Individual checks */}
           <div className="space-y-2">
