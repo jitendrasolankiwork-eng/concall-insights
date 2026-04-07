@@ -227,14 +227,22 @@ export default function Dashboard() {
   const { companies, loading, error, retry } = useAllCompanies();
   const [sort,      setSort]      = useState<SortKey>("updated");
   const [filter,    setFilter]    = useState<FilterKey>("all");
+  const [search,    setSearch]    = useState("");
   const [showModal, setShowModal] = useState(false);
 
   const filtered = useMemo(() => {
-    const f = filter === "all"
+    let f = filter === "all"
       ? companies
       : companies.filter((c) => c.verdict.key === filter);
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      f = f.filter((c) =>
+        c.ticker.toLowerCase().includes(q) ||
+        c.company.toLowerCase().includes(q)
+      );
+    }
     return sortCompanies(f, sort);
-  }, [companies, sort, filter]);
+  }, [companies, sort, filter, search]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -275,6 +283,24 @@ export default function Dashboard() {
         {/* Sort + Filter bar */}
         {!loading && companies.length > 0 && (
           <div className="flex items-center gap-3 flex-wrap">
+            {/* Search */}
+            <div className="relative">
+              <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted text-xs pointer-events-none">🔍</span>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search company…"
+                className="text-xs bg-card border border-border rounded-lg pl-7 pr-3 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-ring w-40"
+              />
+              {search && (
+                <button onClick={() => setSearch("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary text-xs">
+                  ✕
+                </button>
+              )}
+            </div>
+
             {/* Filter pills */}
             <div className="flex items-center gap-1.5">
               {FILTER_OPTIONS.map((f) => (
