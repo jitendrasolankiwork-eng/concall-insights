@@ -5,7 +5,7 @@ import {
   fetchSheetRows, addSheetRow, updateSheetRow, deleteSheetRow, processSymbol,
   fetchWriterSetup, bseLookup, bseFilings, fetchChangelog,
   processAdminCompanyStream,
-  fetchHealth, runHealthCheck,
+  fetchHealth, runHealthCheck, fetchHealthHistory,
   type SheetRowInput, type HealthPayload, type HealthCheckResult,
 } from "@/lib/api";
 import { CompanySearch } from "@/components/CompanySearch";
@@ -1564,14 +1564,16 @@ export default function Admin() {
 // ── Health Check Tab ──────────────────────────────────────────────────────────
 function HealthTab({ pin }: { pin: string }) {
   const [data,    setData]    = useState<HealthPayload | null>(null);
+  const [history, setHistory] = useState<(HealthPayload & { id: string })[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
-    const result = await fetchHealth();
-    setData(result);
+    const [latest, hist] = await Promise.all([fetchHealth(), fetchHealthHistory()]);
+    setData(latest);
+    setHistory(hist);
     setLoading(false);
   };
 
@@ -1581,6 +1583,9 @@ function HealthTab({ pin }: { pin: string }) {
     try {
       const result = await runHealthCheck(pin);
       setData(result);
+      // Refresh history too so new row appears
+      const hist = await fetchHealthHistory();
+      setHistory(hist);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -1680,16 +1685,13 @@ function HealthTab({ pin }: { pin: string }) {
             {data.results.map((r: HealthCheckResult) => (
               <div key={r.key}
                 className="flex items-center gap-3 px-4 py-3 rounded-xl bg-card border border-border">
-                {/* Status badge */}
                 <span className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold border ${statusColor(r.status)}`}>
                   {statusIcon(r.status)}
                 </span>
-                {/* Label + detail */}
                 <div className="flex-1 min-w-0">
                   <p className="text-xs font-bold text-text-primary">{r.label}</p>
                   <p className="text-2xs text-text-muted truncate">{r.detail}</p>
                 </div>
-                {/* Latency */}
                 {r.latencyMs > 0 && (
                   <span className={`flex-shrink-0 text-2xs font-semibold px-2 py-0.5 rounded-full border ${statusColor(r.status)}`}>
                     {r.latencyMs}ms
@@ -1698,6 +1700,36 @@ function HealthTab({ pin }: { pin: string }) {
               </div>
             ))}
           </div>
+
+          {/* History table */}
+          {history.length > 1 && (
+            <div className="mt-6">
+              <h3 className="text-xs font-bold text-text-primary mb-2">History</h3>
+              <div className="rounded-xl border border-border overflow-hidden">
+                {/* Header */}
+                <div className="grid grid-cols-[100px_1fr_80px] gap-3 px-4 py-2 bg-muted border-b border-border">
+                  {["Date", "Services", "Overall"].map(h => (
+                    <span key={h} className="text-2xs font-bold text-text-muted uppercase tracking-wider">{h}</span>
+                  ))}
+                </div>
+                {history.map((row, i) => {
+                  const failing = row.results?.filter((r: HealthCheckResult) => r.status === "error").map((r: HealthCheckResult) => r.label) || [];
+                  const warning = row.results?.filter((r: HealthCheckResult) => r.status === "warn").map((r: HealthCheckResult) => r.label) || [];
+                  const summary = failing.length > 0 ? failing.join(", ") : warning.length > 0 ? warning.join(", ") : "All OK";
+                  return (
+                    <div key={row.id}
+                      className={`grid grid-cols-[100px_1fr_80px] gap-3 px-4 py-2.5 items-center ${i < history.length - 1 ? "border-b border-border" : ""}`}>
+                      <span className="text-xs font-semibold text-text-primary">{row.id}</span>
+                      <span className="text-xs text-text-muted truncate">{summary}</span>
+                      <span className={`text-2xs font-bold px-2 py-0.5 rounded-full border w-fit ${statusColor(row.overallStatus)}`}>
+                        {statusIcon(row.overallStatus)} {row.overallStatus}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>
