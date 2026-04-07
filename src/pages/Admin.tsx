@@ -780,8 +780,9 @@ function ReprocessModal({
           try {
             await updateSheetRow(pin, row.rowIndex, {
               ...row,
-              status      : resp.success ? "processed" : "error",
-              forceRefresh: false,
+              status          : resp.success ? "processed" : "error",
+              forceRefresh    : false,
+              lastProcessedAt : resp.success ? new Date().toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : row.lastProcessedAt,
             });
           } catch { /* non-critical */ }
         } catch (err: any) {
