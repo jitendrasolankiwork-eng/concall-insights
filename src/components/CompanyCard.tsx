@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CompanyInsight } from "@/types/portfolio";
 import { Link } from "react-router-dom";
+import type { TagCategory } from "@/hooks/useUserTags";
 
 // ── Logo ──────────────────────────────────────────────────────────────────
 // Only slugs confirmed to return 200 from TradingView CDN
@@ -56,7 +57,6 @@ function ScoreDelta({ current, previous }: { current: number; previous?: number 
 // ── Attention tag — computed from data, never crashes ─────────────────────
 function AttentionTag({ company }: { company: CompanyInsight }) {
   // 🆕 NEW — processed within 7 days AND no previous quarter
-  // (if previous quarter exists, it's not "new" — it's just updated)
   const isNew = (() => {
     try {
       const days = (Date.now() - new Date(company.processedAt).getTime()) / 86400000;
@@ -95,8 +95,128 @@ function AttentionTag({ company }: { company: CompanyInsight }) {
   return null;
 }
 
+// ── Tag button — floats top-right, only when user is logged in ────────────
+interface TagButtonProps {
+  company   : CompanyInsight;
+  category  : TagCategory | null;
+  inFlight  : boolean;
+  onTag     : (cat: TagCategory) => void;
+  onUntag   : () => void;
+}
+
+function TagButton({ company, category, inFlight, onTag, onUntag }: TagButtonProps) {
+  const [open, setOpen] = useState(false);
+
+  const icon =
+    inFlight    ? "…"  :
+    category === "portfolio" ? "📁" :
+    category === "watchlist" ? "👁"  :
+    "＋";
+
+  const btnCls = inFlight ? "opacity-50 cursor-not-allowed" : "cursor-pointer";
+  const btnBg  =
+    category === "portfolio" ? "bg-signal-green-bg text-signal-green hover:opacity-80" :
+    category === "watchlist" ? "bg-signal-blue-bg text-signal-blue hover:opacity-80"  :
+    "bg-muted text-text-muted hover:bg-border hover:text-text-secondary";
+
+  function stopAll(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  return (
+    <div className="absolute top-3 right-3 z-10" onClick={stopAll}>
+      {/* Trigger button */}
+      <button
+        disabled={inFlight}
+        onClick={(e) => { stopAll(e); setOpen((v) => !v); }}
+        title={category ? `${category === "portfolio" ? "Portfolio" : "Watchlist"}` : "Add to list"}
+        className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-colors select-none
+          ${btnBg} ${btnCls}`}
+      >
+        {icon}
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 z-40"
+            onClick={(e) => { stopAll(e); setOpen(false); }}
+          />
+          {/* Menu */}
+          <div
+            className="absolute right-0 top-full mt-1.5 z-50 card-base rounded-xl py-1 shadow-lg w-44"
+            style={{ border: "0.5px solid hsl(var(--border))" }}
+            onClick={stopAll}
+          >
+            {/* Company label */}
+            <div className="px-3 py-1.5 border-b border-border mb-1">
+              <p className="text-2xs font-semibold text-text-muted truncate">{company.company}</p>
+            </div>
+
+            {/* Portfolio option */}
+            <button
+              onClick={(e) => { stopAll(e); onTag("portfolio"); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-muted transition-colors flex items-center gap-2"
+            >
+              <span>📁</span>
+              <span>My Portfolio</span>
+              {category === "portfolio" && (
+                <span className="ml-auto text-signal-green font-bold text-2xs">✓</span>
+              )}
+            </button>
+
+            {/* Watchlist option */}
+            <button
+              onClick={(e) => { stopAll(e); onTag("watchlist"); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-muted transition-colors flex items-center gap-2"
+            >
+              <span>👁</span>
+              <span>Watchlist</span>
+              {category === "watchlist" && (
+                <span className="ml-auto text-signal-blue font-bold text-2xs">✓</span>
+              )}
+            </button>
+
+            {/* Remove — only if currently tagged */}
+            {category && (
+              <>
+                <div className="border-t border-border mx-2 my-1" />
+                <button
+                  onClick={(e) => { stopAll(e); onUntag(); setOpen(false); }}
+                  className="w-full text-left px-3 py-2 text-xs text-signal-red hover:bg-signal-red-bg transition-colors flex items-center gap-2"
+                >
+                  <span>✕</span>
+                  <span>Remove</span>
+                </button>
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Card props ────────────────────────────────────────────────────────────
+interface CompanyCardProps {
+  company    : CompanyInsight;
+  tagCategory?: TagCategory | null;
+  tagInFlight?: boolean;
+  onTag?     : (cat: TagCategory) => void;
+  onUntag?   : () => void;
+}
+
 // ── Main card ─────────────────────────────────────────────────────────────
-export default function CompanyCard({ company }: { company: CompanyInsight }) {
+export default function CompanyCard({
+  company,
+  tagCategory,
+  tagInFlight = false,
+  onTag,
+  onUntag,
+}: CompanyCardProps) {
   const vc = company.verdict.key === "buy"
     ? { text: "text-signal-green", bg: "bg-signal-green-bg" }
     : company.verdict.key === "hold"
@@ -117,95 +237,116 @@ export default function CompanyCard({ company }: { company: CompanyInsight }) {
     return first.length > 10 ? first.slice(0, 72) + (first.length > 72 ? "…" : "") : null;
   })();
 
+  // Left accent colour based on tag
+  const accentClass =
+    tagCategory === "portfolio" ? "border-l-[3px] border-l-signal-green" :
+    tagCategory === "watchlist" ? "border-l-[3px] border-l-signal-blue"  : "";
+
   return (
-    <Link to={`/company/${company.ticker}`} className="block card-hover p-4 space-y-3">
+    <div className="relative">
+      <Link
+        to={`/company/${company.ticker}`}
+        className={`block card-hover p-4 space-y-3 ${accentClass}`}
+      >
 
-      {/* Row 1: Logo + name + attention tag + score */}
-      <div className="flex items-start gap-3">
-        <CompanyLogo slug={company.slug} company={company.company} />
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h3 className="text-sm font-bold text-text-primary truncate">{company.company}</h3>
-            <AttentionTag company={company} />
+        {/* Row 1: Logo + name + attention tag + score */}
+        <div className="flex items-start gap-3">
+          <CompanyLogo slug={company.slug} company={company.company} />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-sm font-bold text-text-primary truncate">{company.company}</h3>
+              <AttentionTag company={company} />
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs text-text-muted">{company.ticker} · {company.quarter}</span>
+              {company.investmentType && (
+                <span className="text-2xs font-medium px-1.5 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/20">
+                  {company.investmentType}
+                </span>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-xs text-text-muted">{company.ticker} · {company.quarter}</span>
-            {company.investmentType && (
-              <span className="text-2xs font-medium px-1.5 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue border border-signal-blue/20">
-                {company.investmentType}
-              </span>
-            )}
+          {/* Score + bar + delta stacked — shift left slightly when tag button is shown */}
+          <div className={`flex flex-col items-end gap-1 shrink-0 ${onTag ? "mr-7" : ""}`}>
+            <span className={`text-xl font-black ${vc.text}`}>
+              {company.compositeScore.toFixed(1)}
+              <span className="text-xs font-normal text-text-muted"> /5</span>
+            </span>
+            <div className="flex gap-0.5 w-14">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className={`h-1 flex-1 rounded-full ${
+                  i <= Math.round(company.compositeScore)
+                    ? company.verdict.key === "buy"  ? "bg-signal-green"
+                    : company.verdict.key === "hold" ? "bg-signal-amber"
+                    : "bg-signal-red"
+                    : "bg-muted"
+                }`} />
+              ))}
+            </div>
+            <ScoreDelta current={company.compositeScore} previous={company.previousCompositeScore} />
           </div>
         </div>
-        {/* Score + bar + delta stacked */}
-        <div className="flex flex-col items-end gap-1 shrink-0">
-          <span className={`text-xl font-black ${vc.text}`}>
-            {company.compositeScore.toFixed(1)}
-            <span className="text-xs font-normal text-text-muted"> /5</span>
+
+        {/* Row 2: Price + verdict + thesis */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {company.price > 0 && (
+            <span className={`text-xs font-medium ${
+              company.priceChange >= 0 ? "text-signal-green" : "text-signal-red"
+            }`}>
+              ₹{company.price.toLocaleString("en-IN")} {company.priceChange >= 0 ? "▲" : "▼"} {Math.abs(company.priceChange).toFixed(2)}%
+            </span>
+          )}
+          <span className={`text-2xs font-semibold uppercase px-2 py-0.5 rounded-full ${vc.bg} ${vc.text}`}>
+            {company.verdict.label}
           </span>
-          <div className="flex gap-0.5 w-14">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className={`h-1 flex-1 rounded-full ${
-                i <= Math.round(company.compositeScore)
-                  ? company.verdict.key === "buy"  ? "bg-signal-green"
-                  : company.verdict.key === "hold" ? "bg-signal-amber"
-                  : "bg-signal-red"
-                  : "bg-muted"
+          <span className="text-2xs font-medium px-2 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue">
+            Thesis {company.thesisPassed}/{company.thesisTotal}
+          </span>
+        </div>
+
+        {/* Row 3: Signal dots */}
+        <div className="flex gap-4">
+          {[
+            { label: "Capex",   score: company.parameters.capex.score          },
+            { label: "Growth",  score: company.parameters.revenueGrowth.score  },
+            { label: "Margins", score: company.parameters.marginOutlook.score  },
+          ].map(({ label, score }) => (
+            <div key={label} className="flex items-center gap-1.5 text-xs text-text-secondary">
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                score >= 4 ? "bg-signal-green" : score >= 3 ? "bg-signal-amber" : "bg-signal-red"
               }`} />
-            ))}
-          </div>
-          <ScoreDelta current={company.compositeScore} previous={company.previousCompositeScore} />
+              <span>{label}</span>
+              <span className="font-semibold text-text-primary">{score}/5</span>
+            </div>
+          ))}
         </div>
-      </div>
 
-      {/* Row 2: Price + verdict + thesis */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {company.price > 0 && (
-          <span className={`text-xs font-medium ${
-            company.priceChange >= 0 ? "text-signal-green" : "text-signal-red"
-          }`}>
-            ₹{company.price.toLocaleString("en-IN")} {company.priceChange >= 0 ? "▲" : "▼"} {Math.abs(company.priceChange).toFixed(2)}%
-          </span>
+        {/* Row 4: 1-line insight */}
+        {insight && (
+          <p className="text-xs text-text-secondary leading-snug">{insight}</p>
         )}
-        <span className={`text-2xs font-semibold uppercase px-2 py-0.5 rounded-full ${vc.bg} ${vc.text}`}>
-          {company.verdict.label}
-        </span>
-        <span className="text-2xs font-medium px-2 py-0.5 rounded-full bg-signal-blue-bg text-signal-blue">
-          Thesis {company.thesisPassed}/{company.thesisTotal}
-        </span>
-      </div>
 
-      {/* Row 3: Signal dots */}
-      <div className="flex gap-4">
-        {[
-          { label: "Capex",   score: company.parameters.capex.score          },
-          { label: "Growth",  score: company.parameters.revenueGrowth.score  },
-          { label: "Margins", score: company.parameters.marginOutlook.score  },
-        ].map(({ label, score }) => (
-          <div key={label} className="flex items-center gap-1.5 text-xs text-text-secondary">
-            <span className={`w-1.5 h-1.5 rounded-full ${
-              score >= 4 ? "bg-signal-green" : score >= 3 ? "bg-signal-amber" : "bg-signal-red"
-            }`} />
-            <span>{label}</span>
-            <span className="font-semibold text-text-primary">{score}/5</span>
-          </div>
-        ))}
-      </div>
+        {/* Row 5: Tone + updated */}
+        <div className="flex items-center justify-between">
+          <span className="flex items-center gap-1.5 text-xs text-text-secondary">
+            <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+            {toneLabel}
+          </span>
+          <span className="text-2xs text-text-muted">Updated {company.processedAt}</span>
+        </div>
 
-      {/* Row 4: 1-line insight */}
-      {insight && (
-        <p className="text-xs text-text-secondary leading-snug">{insight}</p>
+      </Link>
+
+      {/* Tag button — outside Link so clicks don't navigate */}
+      {onTag && onUntag && (
+        <TagButton
+          company={company}
+          category={tagCategory ?? null}
+          inFlight={tagInFlight}
+          onTag={onTag}
+          onUntag={onUntag}
+        />
       )}
-
-      {/* Row 5: Tone + updated */}
-      <div className="flex items-center justify-between">
-        <span className="flex items-center gap-1.5 text-xs text-text-secondary">
-          <span className={`w-2 h-2 rounded-full ${dotColor}`} />
-          {toneLabel}
-        </span>
-        <span className="text-2xs text-text-muted">Updated {company.processedAt}</span>
-      </div>
-
-    </Link>
+    </div>
   );
 }

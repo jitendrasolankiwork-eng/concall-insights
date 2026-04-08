@@ -1,5 +1,5 @@
 import { useParams, Link, useSearchParams } from "react-router-dom";
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { fetchCompany, fetchCompanyByQuarter, fetchAvailableQuarters, fetchRecentAnnouncements, type RecentAnnouncement } from "@/lib/api";
 import ValuationSection from "@/components/ValuationSection";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -8,6 +8,9 @@ import { KeyRatiosTab }      from "@/components/KeyRatiosTab";
 import { ShareholdingTab }   from "@/components/ShareholdingTab";
 import { AnnouncementsTab }  from "@/components/AnnouncementsTab";
 import { CompanyInsight, Parameter } from "@/types/portfolio";
+import { useAuth } from "@/lib/auth";
+import { useUserTags } from "@/hooks/useUserTags";
+import type { TagCategory } from "@/hooks/useUserTags";
 
 type ActiveTab = "insights" | "fundamentals" | "ratios" | "shareholding" | "announcements";
 
@@ -426,6 +429,80 @@ function HowScoresModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ── Inline tag button for detail page header ─────────────────────────────────
+function DetailTagButton({
+  symbol, name, category, inFlight, onTag, onUntag,
+}: {
+  symbol   : string;
+  name     : string;
+  category : TagCategory | null;
+  inFlight : boolean;
+  onTag    : (cat: TagCategory) => void;
+  onUntag  : () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const label =
+    inFlight   ? "…" :
+    category === "portfolio" ? "📁 Portfolio" :
+    category === "watchlist" ? "👁 Watchlist"  :
+    "＋ Add to list";
+
+  const btnCls =
+    category === "portfolio" ? "bg-signal-green-bg text-signal-green border-signal-green/30" :
+    category === "watchlist" ? "bg-signal-blue-bg text-signal-blue border-signal-blue/30"    :
+    "bg-muted text-text-muted border-border hover:bg-border";
+
+  return (
+    <div className="relative ml-auto">
+      <button
+        disabled={inFlight}
+        onClick={() => setOpen((v) => !v)}
+        className={`text-2xs font-semibold px-2.5 py-1 rounded-full border transition-colors
+          ${btnCls} ${inFlight ? "opacity-60 cursor-not-allowed" : ""}`}
+      >
+        {label}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full mt-1.5 z-50 card-base rounded-xl py-1 shadow-lg w-44"
+            style={{ border: "0.5px solid hsl(var(--border))" }}>
+            <div className="px-3 py-1.5 border-b border-border mb-1">
+              <p className="text-2xs font-semibold text-text-muted truncate">{name}</p>
+            </div>
+            <button
+              onClick={() => { onTag("portfolio"); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-muted transition-colors flex items-center gap-2"
+            >
+              <span>📁</span><span>My Portfolio</span>
+              {category === "portfolio" && <span className="ml-auto text-signal-green font-bold text-2xs">✓</span>}
+            </button>
+            <button
+              onClick={() => { onTag("watchlist"); setOpen(false); }}
+              className="w-full text-left px-3 py-2 text-xs hover:bg-muted transition-colors flex items-center gap-2"
+            >
+              <span>👁</span><span>Watchlist</span>
+              {category === "watchlist" && <span className="ml-auto text-signal-blue font-bold text-2xs">✓</span>}
+            </button>
+            {category && (
+              <>
+                <div className="border-t border-border mx-2 my-1" />
+                <button
+                  onClick={() => { onUntag(); setOpen(false); }}
+                  className="w-full text-left px-3 py-2 text-xs text-signal-red hover:bg-signal-red-bg transition-colors flex items-center gap-2"
+                >
+                  <span>✕</span><span>Remove</span>
+                </button>
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function CompanyDetail() {
   const { ticker } = useParams<{ ticker: string }>();
   const sym = ticker?.toUpperCase() || "";
@@ -445,6 +522,23 @@ export default function CompanyDetail() {
   const [valuation,          setValuation]          = useState<any>(null);
   const [marketCap,          setMarketCap]          = useState<number | null>(null);
   const [valuationEstimate,  setValuationEstimate]  = useState<any>(null);
+
+  // ── Portfolio / Watchlist tagging ──────────────────────────────────────────
+  const { user } = useAuth();
+  const [tagToast, setTagToast] = useState<string | null>(null);
+  const onTagSuccess = useCallback((
+    symbol: string,
+    action: "tagged" | "moved" | "removed",
+    category?: TagCategory,
+  ) => {
+    if (action === "tagged")  setTagToast(`Added to ${category === "portfolio" ? "Portfolio 📁" : "Watchlist 👁"}`);
+    if (action === "moved")   setTagToast(`Moved to ${category === "portfolio" ? "Portfolio 📁" : "Watchlist 👁"}`);
+    if (action === "removed") setTagToast("Removed from list");
+    setTimeout(() => setTagToast(null), 2500);
+  }, []);
+  const { tags, inFlight, tag: tagCompany, untag } = useUserTags(onTagSuccess);
+  const tagCategory: TagCategory | null = sym ? (tags[sym] ?? null) : null;
+  const tagInFlight = inFlight.has(sym);
 
   // Critical announcements (P5) for this company — shown as alert banner
   const [criticalAnns, setCriticalAnns] = useState<RecentAnnouncement[]>([]);
@@ -638,7 +732,7 @@ export default function CompanyDetail() {
             </div>
           </div>
 
-          {/* Row 2: Verdict + score + delta + confidence */}
+          {/* Row 2: Verdict + score + delta + confidence + tag button */}
           <div className="flex items-center gap-2 mt-2.5 flex-wrap">
             <span className={`text-xs font-extrabold px-2.5 py-1 rounded-lg border border-current ${vc.bg} ${vc.text}`}>
               {company.verdict.emoji} {company.verdict.label}
@@ -661,9 +755,30 @@ export default function CompanyDetail() {
                 ✓ {company.confidence.display}
               </span>
             )}
+
+            {/* Tag button — only when user is logged in */}
+            {user && (
+              <DetailTagButton
+                symbol={sym}
+                name={company.company}
+                category={tagCategory}
+                inFlight={tagInFlight}
+                onTag={(cat) => tagCompany(sym, company.company, cat)}
+                onUntag={() => untag(sym)}
+              />
+            )}
           </div>
         </div>
       </header>
+
+      {/* Tag toast */}
+      {tagToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] pointer-events-none">
+          <div className="text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg bg-foreground text-card animate-in fade-in slide-in-from-bottom-2 duration-200">
+            {tagToast}
+          </div>
+        </div>
+      )}
 
       <main className="container py-4 space-y-4">
 

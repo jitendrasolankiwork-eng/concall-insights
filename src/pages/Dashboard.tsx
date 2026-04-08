@@ -1,10 +1,13 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import CompanyCard from "@/components/CompanyCard";
 import ThemeToggle from "@/components/ThemeToggle";
 import AuthButton from "@/components/AuthButton";
 import { AnnouncementsSection } from "@/components/AnnouncementsSection";
 import { fetchCompany } from "@/lib/api";
 import type { CompanyInsight } from "@/types/portfolio";
+import { useAuth } from "@/lib/auth";
+import { useUserTags } from "@/hooks/useUserTags";
+import type { TagCategory, TagAction } from "@/hooks/useUserTags";
 
 // ── Auto-load all processed companies from backend ────────────────────────
 const useAllCompanies = () => {
@@ -38,6 +41,41 @@ const useAllCompanies = () => {
   const retry = () => setRetryCount((c) => c + 1);
   return { companies, loading, error, retry };
 };
+
+// ── Simple toast ──────────────────────────────────────────────────────────
+interface Toast { id: number; message: string; type: "success" | "info" | "error"; }
+
+function ToastStack({ toasts }: { toasts: Toast[] }) {
+  if (toasts.length === 0) return null;
+  return (
+    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-2 items-center pointer-events-none">
+      {toasts.map((t) => (
+        <div
+          key={t.id}
+          className={`text-xs font-semibold px-4 py-2.5 rounded-full shadow-lg animate-in fade-in slide-in-from-bottom-2 duration-200
+            ${t.type === "success" ? "bg-signal-green text-white" :
+              t.type === "error"   ? "bg-signal-red text-white"   :
+              "bg-foreground text-card"
+            }`}
+        >
+          {t.message}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function useToasts() {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const show = useCallback((message: string, type: Toast["type"] = "success") => {
+    const newId = Date.now() + Math.random();
+    setToasts((t) => [...t, { id: newId, message, type }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== newId)), 2800);
+  }, []);
+
+  return { toasts, show };
+}
 
 // ── How Scores Work Modal ─────────────────────────────────────────────────
 function HowScoresModal({ onClose }: { onClose: () => void }) {
@@ -103,13 +141,27 @@ function HowScoresModal({ onClose }: { onClose: () => void }) {
 }
 
 // ── Portfolio strip ───────────────────────────────────────────────────────
-function PortfolioStrip({ companies }: { companies: CompanyInsight[] }) {
-  if (companies.length === 0) return null;
+function PortfolioStrip({
+  companies,
+  portfolioSymbols,
+}: {
+  companies       : CompanyInsight[];
+  portfolioSymbols: Set<string> | null;
+}) {
+  // If user is logged in and has tagged portfolio companies, use those
+  // Otherwise fall back to all companies (demo / logged-out view)
+  const list = portfolioSymbols && portfolioSymbols.size > 0
+    ? companies.filter((c) => portfolioSymbols.has(c.ticker))
+    : portfolioSymbols !== null
+    ? [] // logged in but nothing tagged yet
+    : companies; // logged out — show all
 
-  const buy    = companies.filter((c) => c.verdict.key === "buy").length;
-  const hold   = companies.filter((c) => c.verdict.key === "hold").length;
-  const weak   = companies.filter((c) => c.verdict.key === "weak").length;
-  const sorted = [...companies].sort((a, b) => b.compositeScore - a.compositeScore);
+  if (list.length === 0) return null;
+
+  const buy    = list.filter((c) => c.verdict.key === "buy").length;
+  const hold   = list.filter((c) => c.verdict.key === "hold").length;
+  const weak   = list.filter((c) => c.verdict.key === "weak").length;
+  const sorted = [...list].sort((a, b) => b.compositeScore - a.compositeScore);
   const top    = sorted[0];
   const bottom = sorted[sorted.length - 1];
   const showPerf = sorted.length >= 2 && top.ticker !== bottom.ticker;
@@ -117,12 +169,14 @@ function PortfolioStrip({ companies }: { companies: CompanyInsight[] }) {
   const actionLine =
     weak > 0         ? `${weak} stock${weak > 1 ? "s" : ""} need${weak === 1 ? "s" : ""} attention` :
     hold > 0         ? `${hold} stock${hold > 1 ? "s" : ""} to monitor` :
-    buy === companies.length ? "All stocks looking good" : "";
+    buy === list.length ? "All stocks looking good" : "";
 
   return (
     <div className="card-base px-4 py-3 space-y-3">
       <div className="flex items-center gap-4 flex-wrap">
-        <span className="text-xs font-semibold text-text-secondary">Your portfolio</span>
+        <span className="text-xs font-semibold text-text-secondary">
+          {portfolioSymbols && portfolioSymbols.size > 0 ? "My portfolio" : "Your portfolio"}
+        </span>
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5 text-xs">
             <span className="w-2 h-2 rounded-full bg-signal-green" />
@@ -193,7 +247,7 @@ function CardSkeleton() {
 
 // ── Sort + Filter controls ────────────────────────────────────────────────
 type SortKey    = "score" | "verdict" | "name" | "updated";
-type FilterKey  = "all" | "buy" | "hold" | "weak";
+type FilterKey  = "all" | "buy" | "hold" | "weak" | "portfolio" | "watchlist";
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "score",   label: "Score"   },
@@ -202,15 +256,22 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "updated", label: "Updated" },
 ];
 
-const FILTER_OPTIONS: { key: FilterKey; label: string; color: string }[] = [
-  { key: "all",  label: "All",  color: "text-text-secondary" },
-  { key: "buy",  label: "BUY",  color: "text-signal-green"   },
-  { key: "hold", label: "HOLD", color: "text-signal-amber"   },
-  { key: "weak", label: "WEAK", color: "text-signal-red"     },
-];
+const TAG_GROUP: Record<TagCategory, number> = { portfolio: 0, watchlist: 1 };
 
-function sortCompanies(companies: CompanyInsight[], sort: SortKey): CompanyInsight[] {
+function sortCompanies(
+  companies: CompanyInsight[],
+  sort: SortKey,
+  tags: Record<string, TagCategory>,
+  tagFilter: FilterKey,
+): CompanyInsight[] {
   return [...companies].sort((a, b) => {
+    // When viewing "all" companies: portfolio → watchlist → untagged (primary key)
+    if (tagFilter === "all") {
+      const aGroup = TAG_GROUP[tags[a.ticker]] ?? 2;
+      const bGroup = TAG_GROUP[tags[b.ticker]] ?? 2;
+      if (aGroup !== bGroup) return aGroup - bGroup;
+    }
+    // Secondary: selected sort
     if (sort === "score")   return b.compositeScore - a.compositeScore;
     if (sort === "verdict") {
       const order = { buy: 0, hold: 1, weak: 2 };
@@ -225,15 +286,54 @@ function sortCompanies(companies: CompanyInsight[], sort: SortKey): CompanyInsig
 // ── Dashboard ─────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { companies, loading, error, retry } = useAllCompanies();
+  const { user } = useAuth();
   const [sort,      setSort]      = useState<SortKey>("updated");
   const [filter,    setFilter]    = useState<FilterKey>("all");
   const [search,    setSearch]    = useState("");
   const [showModal, setShowModal] = useState(false);
+  const { toasts, show: showToast } = useToasts();
 
+  // ── Tag callbacks with toast ─────────────────────────────────────────────
+  const onTagSuccess = useCallback((
+    symbol: string,
+    action: TagAction,
+    category?: TagCategory,
+  ) => {
+    if (action === "tagged") {
+      showToast(`${symbol} added to ${category === "portfolio" ? "Portfolio 📁" : "Watchlist 👁"}`);
+    } else if (action === "moved") {
+      showToast(`${symbol} moved to ${category === "portfolio" ? "Portfolio 📁" : "Watchlist 👁"}`, "info");
+    } else {
+      showToast(`${symbol} removed`, "info");
+    }
+  }, [showToast]);
+
+  const { tags, inFlight, tag, untag } = useUserTags(onTagSuccess);
+
+  // Portfolio symbols set (null = logged out = no tag state)
+  const portfolioSymbols = useMemo((): Set<string> | null => {
+    if (!user) return null;
+    return new Set(
+      Object.entries(tags)
+        .filter(([, cat]) => cat === "portfolio")
+        .map(([sym]) => sym),
+    );
+  }, [user, tags]);
+
+  // ── Filtering & sorting ──────────────────────────────────────────────────
   const filtered = useMemo(() => {
-    let f = filter === "all"
-      ? companies
-      : companies.filter((c) => c.verdict.key === filter);
+    let f = companies;
+
+    // Verdict filter
+    if (filter === "buy" || filter === "hold" || filter === "weak") {
+      f = f.filter((c) => c.verdict.key === filter);
+    }
+
+    // Tag filter (portfolio / watchlist)
+    if (filter === "portfolio") f = f.filter((c) => tags[c.ticker] === "portfolio");
+    if (filter === "watchlist") f = f.filter((c) => tags[c.ticker] === "watchlist");
+
+    // Search
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       f = f.filter((c) =>
@@ -241,8 +341,37 @@ export default function Dashboard() {
         c.company.toLowerCase().includes(q)
       );
     }
-    return sortCompanies(f, sort);
-  }, [companies, sort, filter, search]);
+
+    return sortCompanies(f, sort, tags, filter);
+  }, [companies, sort, filter, search, tags]);
+
+  // When user logs out, reset tag filter
+  useEffect(() => {
+    if (!user && (filter === "portfolio" || filter === "watchlist")) {
+      setFilter("all");
+    }
+  }, [user, filter]);
+
+  // Counts for pills
+  const portfolioCount = useMemo(
+    () => companies.filter((c) => tags[c.ticker] === "portfolio").length,
+    [companies, tags],
+  );
+  const watchlistCount = useMemo(
+    () => companies.filter((c) => tags[c.ticker] === "watchlist").length,
+    [companies, tags],
+  );
+
+  const FILTER_OPTIONS: { key: FilterKey; label: string; count?: number }[] = [
+    { key: "all",  label: "All" },
+    { key: "buy",  label: "BUY" },
+    { key: "hold", label: "HOLD" },
+    { key: "weak", label: "WEAK" },
+    ...(user ? [
+      { key: "portfolio" as FilterKey, label: "📁 Portfolio", count: portfolioCount },
+      { key: "watchlist" as FilterKey, label: "👁 Watchlist",  count: watchlistCount },
+    ] : []),
+  ];
 
   return (
     <div className="min-h-screen bg-background">
@@ -273,7 +402,12 @@ export default function Dashboard() {
       <main className="container py-6 space-y-5">
 
         {/* Portfolio strip */}
-        {!loading && <PortfolioStrip companies={companies} />}
+        {!loading && (
+          <PortfolioStrip
+            companies={companies}
+            portfolioSymbols={portfolioSymbols}
+          />
+        )}
 
         {/* Announcements feed — tracked companies only */}
         {!loading && companies.length > 0 && (
@@ -302,22 +436,35 @@ export default function Dashboard() {
             </div>
 
             {/* Filter pills */}
-            <div className="flex items-center gap-1.5">
-              {FILTER_OPTIONS.map((f) => (
-                <button key={f.key} onClick={() => setFilter(f.key)}
-                  className={`text-xs font-medium px-3 py-1.5 rounded-full transition-colors ${
-                    filter === f.key
-                      ? "bg-foreground text-card"
-                      : "bg-muted text-text-muted hover:bg-border"
-                  }`}>
-                  {f.label}
-                  {f.key !== "all" && (
-                    <span className="ml-1 opacity-70">
-                      {companies.filter((c) => c.verdict.key === f.key).length}
-                    </span>
-                  )}
-                </button>
-              ))}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {FILTER_OPTIONS.map((f) => {
+                const isActive = filter === f.key;
+                const isTagFilter = f.key === "portfolio" || f.key === "watchlist";
+                return (
+                  <button key={f.key} onClick={() => setFilter(f.key)}
+                    className={`text-xs font-medium px-3 py-1.5 rounded-full transition-colors ${
+                      isActive
+                        ? isTagFilter && f.key === "portfolio"
+                          ? "bg-signal-green text-white"
+                          : isTagFilter && f.key === "watchlist"
+                          ? "bg-signal-blue text-white"
+                          : "bg-foreground text-card"
+                        : isTagFilter
+                        ? "bg-muted text-text-muted hover:bg-border border border-dashed border-border"
+                        : "bg-muted text-text-muted hover:bg-border"
+                    }`}>
+                    {f.label}
+                    {f.key !== "all" && f.count === undefined && (
+                      <span className="ml-1 opacity-70">
+                        {companies.filter((c) => c.verdict.key === f.key).length}
+                      </span>
+                    )}
+                    {f.count !== undefined && (
+                      <span className="ml-1 opacity-80">{f.count}</span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
 
             {/* Sort dropdown */}
@@ -331,6 +478,14 @@ export default function Dashboard() {
                 ))}
               </select>
             </div>
+          </div>
+        )}
+
+        {/* Sign-in nudge for untagged users (shown once they have companies) */}
+        {!loading && !user && companies.length > 0 && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-signal-blue-bg border border-signal-blue/20 text-xs text-signal-blue">
+            <span>💡</span>
+            <span>Sign in to tag companies as <strong>Portfolio</strong> or <strong>Watchlist</strong></span>
           </div>
         )}
 
@@ -362,19 +517,39 @@ export default function Dashboard() {
         {/* No results after filter */}
         {!loading && companies.length > 0 && filtered.length === 0 && (
           <div className="card-base p-6 text-center">
-            <p className="text-xs text-text-muted">No {filter.toUpperCase()} stocks in your portfolio</p>
+            <p className="text-xs text-text-muted">
+              {filter === "portfolio" ? "No companies tagged as Portfolio yet" :
+               filter === "watchlist" ? "No companies tagged as Watchlist yet" :
+               `No ${filter.toUpperCase()} stocks in your portfolio`}
+            </p>
+            {(filter === "portfolio" || filter === "watchlist") && (
+              <p className="text-2xs text-text-muted mt-1">
+                Click the <strong>＋</strong> button on any card to add it
+              </p>
+            )}
           </div>
         )}
 
         {/* Company grid */}
         {!loading && filtered.length > 0 && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filtered.map((c) => <CompanyCard key={c.ticker} company={c} />)}
+            {filtered.map((c) => (
+              <CompanyCard
+                key={c.ticker}
+                company={c}
+                tagCategory={user ? (tags[c.ticker] ?? null) : undefined}
+                tagInFlight={inFlight.has(c.ticker)}
+                onTag={user ? (cat) => tag(c.ticker, c.company, cat) : undefined}
+                onUntag={user ? () => untag(c.ticker) : undefined}
+              />
+            ))}
           </div>
         )}
 
       </main>
+
       {showModal && <HowScoresModal onClose={() => setShowModal(false)} />}
+      <ToastStack toasts={toasts} />
     </div>
   );
 }
