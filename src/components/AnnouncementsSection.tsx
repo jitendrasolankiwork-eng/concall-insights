@@ -186,8 +186,7 @@ function AnnouncementRow({ ann }: { ann: RecentAnnouncement }) {
 type SortKey    = "date" | "priority" | "symbol";
 type ImpactFilter = "all" | "positive" | "negative" | "neutral";
 
-const INITIAL_SHOW = 5;
-const PAGE_SIZE    = 5;
+const PAGE_SIZE = 10;
 
 interface Props {
   symbols?: string[];
@@ -196,7 +195,7 @@ interface Props {
 export function AnnouncementsSection({ symbols = [] }: Props) {
   const [announcements, setAnnouncements] = useState<RecentAnnouncement[]>([]);
   const [loading,       setLoading]       = useState(true);
-  const [visibleCount,  setVisibleCount]  = useState(INITIAL_SHOW);
+  const [page,          setPage]          = useState(1);
   const [impact,        setImpact]        = useState<ImpactFilter>("all");
   const [sort,          setSort]          = useState<SortKey>("date");
   const [company,       setCompany]       = useState<string>("all");
@@ -234,11 +233,11 @@ export function AnnouncementsSection({ symbols = [] }: Props) {
     return (b.date || "").localeCompare(a.date || "");
   });
 
-  const visible  = sorted.slice(0, visibleCount);
-  const hasMore  = visibleCount < sorted.length;
-  const criticals = announcements.filter((a) => a.signal.priority >= 5).length;
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
+  const visible    = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const criticals  = announcements.filter((a) => a.signal.priority >= 5).length;
 
-  const resetVisible = () => setVisibleCount(INITIAL_SHOW);
+  const resetPage = () => setPage(1);
 
   if (!loading && announcements.length === 0) return null;
 
@@ -272,7 +271,7 @@ export function AnnouncementsSection({ symbols = [] }: Props) {
             {(["all", "positive", "negative", "neutral"] as const).map((f) => (
               <button
                 key={f}
-                onClick={() => { setImpact(f); resetVisible(); }}
+                onClick={() => { setImpact(f); resetPage(); }}
                 className={`text-2xs px-2.5 py-1 rounded-full font-medium transition-colors ${
                   impact === f
                     ? "bg-foreground text-card"
@@ -288,7 +287,7 @@ export function AnnouncementsSection({ symbols = [] }: Props) {
             {/* Company dropdown */}
             <select
               value={company}
-              onChange={(e) => { setCompany(e.target.value); resetVisible(); }}
+              onChange={(e) => { setCompany(e.target.value); resetPage(); }}
               className="text-2xs bg-card border border-border rounded-lg px-2 py-1.5 text-text-primary focus:outline-none focus:ring-1 focus:ring-ring"
             >
               <option value="all">All companies</option>
@@ -300,7 +299,7 @@ export function AnnouncementsSection({ symbols = [] }: Props) {
             {/* Sort dropdown */}
             <select
               value={sort}
-              onChange={(e) => { setSort(e.target.value as SortKey); resetVisible(); }}
+              onChange={(e) => { setSort(e.target.value as SortKey); resetPage(); }}
               className="text-2xs bg-card border border-border rounded-lg px-2 py-1.5 text-text-primary focus:outline-none focus:ring-1 focus:ring-ring"
             >
               <option value="date">Sort: Newest first</option>
@@ -334,25 +333,49 @@ export function AnnouncementsSection({ symbols = [] }: Props) {
         </div>
       )}
 
-      {/* Pagination: Show more / Show less */}
-      {!loading && sorted.length > INITIAL_SHOW && (
-        <div className="flex items-center gap-2">
-          {hasMore && (
-            <button
-              onClick={() => setVisibleCount((v) => v + PAGE_SIZE)}
-              className="flex-1 text-xs py-2.5 rounded-xl bg-muted text-text-muted hover:bg-border transition-colors"
-            >
-              Show {Math.min(PAGE_SIZE, sorted.length - visibleCount)} more ↓
-            </button>
-          )}
-          {visibleCount > INITIAL_SHOW && (
-            <button
-              onClick={() => setVisibleCount(INITIAL_SHOW)}
-              className={`text-xs py-2.5 rounded-xl bg-muted text-text-muted hover:bg-border transition-colors ${hasMore ? "px-4" : "flex-1"}`}
-            >
-              Show less ↑
-            </button>
-          )}
+      {/* Pagination */}
+      {!loading && totalPages > 1 && (
+        <div className="flex items-center justify-center gap-1 pt-1">
+          <button
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page === 1}
+            className="text-xs px-2.5 py-1.5 rounded-lg bg-muted text-text-muted hover:bg-border transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            ←
+          </button>
+
+          {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => {
+            // Always show first, last, current, and neighbours; replace gaps with …
+            const show = p === 1 || p === totalPages || Math.abs(p - page) <= 1;
+            const gap  = !show && (p === 2 && page > 4 || p === totalPages - 1 && page < totalPages - 3);
+            if (!show && !gap) return null;
+            if (gap) return <span key={p} className="text-xs text-text-muted px-1">…</span>;
+            return (
+              <button
+                key={p}
+                onClick={() => setPage(p)}
+                className={`text-xs w-8 h-7 rounded-lg font-medium transition-colors ${
+                  p === page
+                    ? "bg-foreground text-card"
+                    : "bg-muted text-text-muted hover:bg-border"
+                }`}
+              >
+                {p}
+              </button>
+            );
+          })}
+
+          <button
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+            className="text-xs px-2.5 py-1.5 rounded-lg bg-muted text-text-muted hover:bg-border transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            →
+          </button>
+
+          <span className="text-2xs text-text-muted ml-2">
+            {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, sorted.length)} of {sorted.length}
+          </span>
         </div>
       )}
 
