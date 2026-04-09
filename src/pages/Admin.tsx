@@ -5,7 +5,7 @@ import {
   fetchSheetRows, addSheetRow, updateSheetRow, deleteSheetRow, processSymbol,
   fetchWriterSetup, bseLookup, bseFilings, fetchChangelog,
   processAdminCompanyStream,
-  fetchHealth, runHealthCheck, fetchHealthHistory,
+  fetchHealth, runHealthCheck, fetchHealthHistory, triggerAnnouncementPoll,
   type SheetRowInput, type HealthPayload, type HealthCheckResult,
 } from "@/lib/api";
 import { CompanySearch } from "@/components/CompanySearch";
@@ -1563,11 +1563,13 @@ export default function Admin() {
 
 // ── Health Check Tab ──────────────────────────────────────────────────────────
 function HealthTab({ pin }: { pin: string }) {
-  const [data,    setData]    = useState<HealthPayload | null>(null);
-  const [history, setHistory] = useState<(HealthPayload & { id: string })[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
-  const [error,   setError]   = useState<string | null>(null);
+  const [data,       setData]       = useState<HealthPayload | null>(null);
+  const [history,    setHistory]    = useState<(HealthPayload & { id: string })[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [running,    setRunning]    = useState(false);
+  const [polling,    setPolling]    = useState(false);
+  const [pollMsg,    setPollMsg]    = useState<string | null>(null);
+  const [error,      setError]      = useState<string | null>(null);
 
   const todayIST = () =>
     new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // "2026-04-09"
@@ -1608,6 +1610,19 @@ function HealthTab({ pin }: { pin: string }) {
 
   const runNow = () => doRun();
 
+  const triggerPoll = async () => {
+    setPolling(true);
+    setPollMsg(null);
+    try {
+      await triggerAnnouncementPoll(pin);
+      setPollMsg("Poll started — check back in ~2 min and re-run health check to see updated status.");
+    } catch (e: any) {
+      setPollMsg(`Failed: ${e.message}`);
+    } finally {
+      setPolling(false);
+    }
+  };
+
   useEffect(() => { load(); }, []);
 
   const statusColor = (s: string) =>
@@ -1646,11 +1661,21 @@ function HealthTab({ pin }: { pin: string }) {
             Auto-runs on tab open if not checked today · {data ? `Last checked ${minutesAgo(data.checkedAt)}` : "Running…"}
           </p>
         </div>
-        <button onClick={runNow} disabled={running}
-          className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-signal-blue text-card hover:opacity-90 transition-all disabled:opacity-50">
-          {running ? <span className="animate-spin">↻</span> : "▶"} {running ? "Running…" : "Run Now"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={triggerPoll} disabled={polling}
+            className="flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-xl border border-border text-text-secondary hover:text-text-primary hover:border-text-muted transition-all disabled:opacity-50">
+            {polling ? <span className="animate-spin">↻</span> : "📡"} {polling ? "Polling…" : "Trigger Poll"}
+          </button>
+          <button onClick={runNow} disabled={running}
+            className="flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-xl bg-signal-blue text-card hover:opacity-90 transition-all disabled:opacity-50">
+            {running ? <span className="animate-spin">↻</span> : "▶"} {running ? "Running…" : "Run Now"}
+          </button>
+        </div>
       </div>
+
+      {pollMsg && (
+        <div className="mb-4 px-3 py-2 rounded-lg bg-signal-blue-bg border border-signal-blue/20 text-xs text-signal-blue">{pollMsg}</div>
+      )}
 
       {error && (
         <div className="mb-4 px-3 py-2 rounded-lg bg-signal-red-bg border border-signal-red/20 text-xs text-signal-red">{error}</div>
@@ -1658,7 +1683,7 @@ function HealthTab({ pin }: { pin: string }) {
 
       {loading && !data && (
         <div className="space-y-3">
-          {[...Array(7)].map((_, i) => (
+          {[...Array(8)].map((_, i) => (
             <div key={i} className="h-16 rounded-xl bg-muted animate-pulse" />
           ))}
         </div>
