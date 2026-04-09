@@ -1569,21 +1569,22 @@ function HealthTab({ pin }: { pin: string }) {
   const [running, setRunning] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
 
-  const load = async () => {
-    setLoading(true);
-    const [latest, hist] = await Promise.all([fetchHealth(), fetchHealthHistory()]);
-    setData(latest);
-    setHistory(hist);
-    setLoading(false);
+  const todayIST = () =>
+    new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // "2026-04-09"
+
+  const isStale = (d: HealthPayload | null) => {
+    if (!d) return true;
+    const checkedDate = new Date(d.checkedAt)
+      .toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    return checkedDate !== todayIST();
   };
 
-  const runNow = async () => {
+  const doRun = async () => {
     setRunning(true);
     setError(null);
     try {
       const result = await runHealthCheck(pin);
       setData(result);
-      // Refresh history too so new row appears
       const hist = await fetchHealthHistory();
       setHistory(hist);
     } catch (e: any) {
@@ -1592,6 +1593,20 @@ function HealthTab({ pin }: { pin: string }) {
       setRunning(false);
     }
   };
+
+  const load = async () => {
+    setLoading(true);
+    const [latest, hist] = await Promise.all([fetchHealth(), fetchHealthHistory()]);
+    setData(latest);
+    setHistory(hist);
+    setLoading(false);
+    // Auto-run if no result for today
+    if (isStale(latest)) {
+      doRun();
+    }
+  };
+
+  const runNow = () => doRun();
 
   useEffect(() => { load(); }, []);
 
@@ -1628,7 +1643,7 @@ function HealthTab({ pin }: { pin: string }) {
         <div>
           <h2 className="text-sm font-bold text-text-primary">Health Check</h2>
           <p className="text-xs text-text-muted mt-0.5">
-            Runs automatically at 9am IST daily · {data ? `Last checked ${minutesAgo(data.checkedAt)}` : "Never run"}
+            Auto-runs on tab open if not checked today · {data ? `Last checked ${minutesAgo(data.checkedAt)}` : "Running…"}
           </p>
         </div>
         <button onClick={runNow} disabled={running}

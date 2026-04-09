@@ -256,22 +256,11 @@ const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: "updated", label: "Updated" },
 ];
 
-const TAG_GROUP: Record<TagCategory, number> = { portfolio: 0, watchlist: 1 };
-
 function sortCompanies(
   companies: CompanyInsight[],
   sort: SortKey,
-  tags: Record<string, TagCategory>,
-  tagFilter: FilterKey,
 ): CompanyInsight[] {
   return [...companies].sort((a, b) => {
-    // When viewing "all" companies: portfolio → watchlist → untagged (primary key)
-    if (tagFilter === "all") {
-      const aGroup = TAG_GROUP[tags[a.ticker]] ?? 2;
-      const bGroup = TAG_GROUP[tags[b.ticker]] ?? 2;
-      if (aGroup !== bGroup) return aGroup - bGroup;
-    }
-    // Secondary: selected sort
     if (sort === "score")   return b.compositeScore - a.compositeScore;
     if (sort === "verdict") {
       const order = { buy: 0, hold: 1, weak: 2 };
@@ -342,7 +331,7 @@ export default function Dashboard() {
       );
     }
 
-    return sortCompanies(f, sort, tags, filter);
+    return sortCompanies(f, sort);
   }, [companies, sort, filter, search, tags]);
 
   // When user logs out, reset tag filter
