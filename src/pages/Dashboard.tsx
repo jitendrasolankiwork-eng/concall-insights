@@ -414,7 +414,7 @@ export default function Dashboard() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search company…"
-                className="text-xs bg-card border border-border rounded-lg pl-7 pr-3 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-ring w-40"
+                className="text-xs bg-card border border-border rounded-lg pl-7 pr-3 py-1.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-ring w-56"
               />
               {search && (
                 <button onClick={() => setSearch("")}
