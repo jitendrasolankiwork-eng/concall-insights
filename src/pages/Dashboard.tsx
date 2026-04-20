@@ -267,7 +267,7 @@ function sortCompanies(
       return (order[a.verdict.key] ?? 3) - (order[b.verdict.key] ?? 3);
     }
     if (sort === "name")    return a.company.localeCompare(b.company);
-    if (sort === "updated") return (b.processedAt || "").localeCompare(a.processedAt || "");
+    if (sort === "updated") return new Date(b.processedAt || 0).getTime() - new Date(a.processedAt || 0).getTime();
     return 0;
   });
 }
