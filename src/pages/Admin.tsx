@@ -815,7 +815,7 @@ function ReprocessModal({
       }
     }
     setPhase("done");
-    onDone();
+    // Do NOT auto-close — user needs to review logs before dismissing
   };
 
   const cancel = () => { cancelled.current = true; onClose(); };
@@ -987,9 +987,9 @@ function ReprocessModal({
             </div>
 
             {phase === "done" && (
-              <button onClick={onClose}
+              <button onClick={onDone}
                 className="w-full py-2.5 text-sm font-semibold rounded-xl bg-signal-green text-card hover:opacity-90 transition-all">
-                Done ✓
+                Close &amp; Refresh ✓
               </button>
             )}
             {phase === "running" && (
