@@ -1152,12 +1152,21 @@ function CompaniesTab({ pin }: { pin: string }) {
                 <p className="text-2xs text-text-muted mt-1">Click "+ Add Row" to add your first company</p>
               </div>
             ) : (
-              rows.map((row, i) => (
+              [...rows].sort((a, b) => {
+                // Recently processed (has date) first, desc; then no-date rows by rowIndex desc
+                // so newly added companies appear above old undated ones.
+                const aDate = a.lastProcessedAt || "";
+                const bDate = b.lastProcessedAt || "";
+                if (aDate && bDate) return bDate.localeCompare(aDate);
+                if (aDate) return -1;
+                if (bDate) return 1;
+                return (b.rowIndex || 0) - (a.rowIndex || 0);
+              }).map((row, i, arr) => (
                 <div
                   key={`${row.rowIndex}-${row.symbol}-${row.quarter}`}
                   className={`grid grid-cols-[110px_160px_80px_110px_72px_80px_130px_auto] gap-3 items-center px-5 py-2.5 transition-colors ${
                     selectedRow?.rowIndex === row.rowIndex ? "bg-signal-blue-bg/30" : "hover:bg-muted/40"
-                  } ${i < rows.length - 1 ? "border-b border-border" : ""}`}
+                  } ${i < arr.length - 1 ? "border-b border-border" : ""}`}
                 >
                   {/* Symbol */}
                   <div className="truncate">
