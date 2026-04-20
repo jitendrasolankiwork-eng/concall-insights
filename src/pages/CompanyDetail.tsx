@@ -1241,7 +1241,7 @@ export default function CompanyDetail() {
         {/* Footer */}
         <footer className="text-center py-6 border-t border-border">
           <p className="text-2xs text-text-muted font-medium">
-            Processed {company.processedAt} ·{" "}
+            Processed {company.processedAt ? new Date(company.processedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—"} ·{" "}
             <button onClick={() => setShowModal(true)}
               className="text-signal-blue hover:underline font-semibold">
               How scores work ↗

@@ -332,7 +332,7 @@ export default function CompanyCard({
             <span className={`w-2 h-2 rounded-full ${dotColor}`} />
             {toneLabel}
           </span>
-          <span className="text-2xs text-text-muted">Updated {company.processedAt}</span>
+          <span className="text-2xs text-text-muted">Updated {company.processedAt ? new Date(company.processedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—"}</span>
         </div>
 
       </Link>
