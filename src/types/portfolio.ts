@@ -1,3 +1,32 @@
+export interface ValuationEstimate {
+  archetype            : string;
+  classificationReason : string;
+  forwardEstimates: {
+    revenue  : { fy1: string | null; fy2: string | null };
+    pat      : { fy1: string | null; fy2: string | null };
+    aum      : { fy1: string | null; fy2: string | null };
+    bookValue: { fy1: string | null; fy2: string | null };
+  };
+  valuation: {
+    primaryMetric    : string;   // "P/B" | "P/E" | "EV/EBITDA" | "P/Sales"
+    primaryRange     : { low: number | null; high: number | null };
+    secondaryMetrics : { pe: number | null; pb: number | null; evEbitda: number | null; peg: number | null };
+  };
+  operatingMetrics: {
+    roe   : number | null;
+    roa   : number | null;
+    nim   : number | null;
+    growth: number | null;
+  };
+  assumptions  : string[];
+  risks        : string[];
+  confidence   : "High" | "Medium" | "Low";
+  mode         : "GUIDED" | "DERIVED" | "MIXED";
+  verdict      : "Cheap" | "Fair" | "Expensive";
+  // kept for backwards compat — may be present on old records
+  investmentType?: string;
+}
+
 export interface ThesisCheck {
   answer: "yes" | "partial" | "no" | "insufficient_data";
   summary: string;

@@ -1,17 +1,6 @@
 "use client";
 import { useState } from "react";
-
-interface ValuationEstimate {
-  mode       : "GUIDED" | "DERIVED" | "BASELINE";
-  confidence : "HIGH" | "MEDIUM" | "LOW";
-  assumptions: { revenueGrowth: string; patMargin: string; drivers: string | string[] };
-  estimates  : {
-    fy1: { revenueRange: string; patRange: string };
-    fy2: { revenueRange: string; patRange: string };
-  };
-  valuation  : { peRange: string; peg: number | null };
-  calculationSteps: string[];
-}
+import type { ValuationEstimate } from "../types/portfolio";
 
 interface Props {
   valuationEstimate : ValuationEstimate | null;
@@ -20,28 +9,15 @@ interface Props {
   price             : number;
 }
 
-const modeColor = (mode: string) =>
-  mode === "GUIDED"  ? "bg-signal-green-bg text-signal-green border-signal-green/20" :
-  mode === "DERIVED" ? "bg-signal-amber-bg text-signal-amber border-signal-amber/20" :
-                       "bg-signal-red-bg text-signal-red border-signal-red/20";
-
-const pegVerdict = (peg: number | null, peRange: string): { label: string; cls: string } => {
-  if (peg === null) {
-    const pe = extractPEMidpoint(peRange);
-    if (pe && pe > 50) return { label: "⚪ Pre-profit", cls: "bg-muted text-text-muted border-border" };
-    return { label: "⚪ No PEG data", cls: "bg-muted text-text-muted border-border" };
-  }
-  if (peg < 1)    return { label: "🟢 Undervalued", cls: "bg-signal-green-bg text-signal-green border-signal-green/20" };
-  if (peg <= 1.5) return { label: "🟡 Fair value",  cls: "bg-signal-amber-bg text-signal-amber border-signal-amber/20" };
-  return           { label: "🔴 Expensive",         cls: "bg-signal-red-bg text-signal-red border-signal-red/20" };
+// ── FY labels from quarter ────────────────────────────────────────────────────
+const getFYLabels = (quarter: string) => {
+  const m = quarter.match(/FY(\d+)/);
+  if (!m) return { fy1: "FY+1", fy2: "FY+2" };
+  const cur = parseInt(m[1]);
+  return { fy1: `FY${cur + 1}`, fy2: `FY${cur + 2}` };
 };
 
-const confLabel = (conf: string) =>
-  conf === "HIGH"   ? "Strong management guidance" :
-  conf === "MEDIUM" ? "Based on management commentary" :
-                      "Weak or unclear data";
-
-// ── Unit normalisation ──────────────────────────────────────────────────
+// ── Unit normalisation: Mn → Cr ───────────────────────────────────────────────
 const normaliseCr = (s: string): string => {
   if (!s || s === "N/A" || s === "—") return s;
   const toMnCr = (n: string) => {
@@ -62,154 +38,153 @@ const normaliseCr = (s: string): string => {
   return r.replace(/INR\s*/g, "").replace(/₹₹/g, "₹");
 };
 
-// ── Split "value (explanation)" ───────────────────────────────────────────
-const splitVal = (s: string): { value: string; note: string } => {
-  if (!s || s === "N/A" || s === "—") return { value: "—", note: "As per management guidance" };
-  const normalised = normaliseCr(s);
-  const idx = normalised.indexOf("(");
-  if (idx === -1) return { value: normalised.trim(), note: "As per management guidance" };
-  return {
-    value: normalised.substring(0, idx).trim(),
-    note : normalised.substring(idx).replace(/^\(|\)$/g, "").trim() || "As per management guidance",
-  };
+// ── Badge colour helpers ──────────────────────────────────────────────────────
+const modeColor = (mode: string) =>
+  mode === "GUIDED"  ? "bg-signal-green-bg text-signal-green border-signal-green/20" :
+  mode === "DERIVED" ? "bg-signal-amber-bg text-signal-amber border-signal-amber/20" :
+                       "bg-signal-red-bg text-signal-red border-signal-red/20";
+
+const verdictColor = (verdict: string) =>
+  verdict === "Cheap"     ? "bg-signal-green-bg text-signal-green border-signal-green/20" :
+  verdict === "Expensive" ? "bg-signal-red-bg text-signal-red border-signal-red/20"       :
+                            "bg-signal-amber-bg text-signal-amber border-signal-amber/20";
+
+const confLabel = (conf: string) =>
+  conf === "High"   ? "Strong management guidance" :
+  conf === "Medium" ? "Based on management commentary" :
+                      "Weak or unclear data";
+
+// ── Archetype pill colour ─────────────────────────────────────────────────────
+const archetypeColor = (archetype: string) => {
+  if (archetype.includes("Financial"))      return "bg-signal-blue-bg text-signal-blue border-signal-blue/20";
+  if (archetype.includes("Asset-Light"))    return "bg-signal-green-bg text-signal-green border-signal-green/20";
+  if (archetype.includes("Consumer"))       return "bg-signal-amber-bg text-signal-amber border-signal-amber/20";
+  if (archetype.includes("Asset-Heavy") || archetype.includes("Cyclical"))
+                                            return "bg-signal-red-bg text-signal-red border-signal-red/20";
+  return "bg-muted text-text-muted border-border"; // Early-Stage / Special Situation
 };
 
-// ── Split FY1/FY2 from assumption strings ─────────────────────────────────
-const splitAssumption = (s: string): { fy1: string; fy2: string } => {
-  if (!s) return { fy1: "—", fy2: "—" };
-  const fy2Match = s.match(/FY[+\d]*2[:\s]+(.+?)(?:;|$)/i) ||
-                   s.match(/FY2[:\s]+(.+?)(?:;|$)/i);
-  const fy1Match = s.match(/FY[+\d]*1[:\s]+(.+?)(?:;|FY[+\d]*2|$)/i) ||
-                   s.match(/FY1[:\s]+(.+?)(?:;|FY2|$)/i);
-  return {
-    fy1: fy1Match ? fy1Match[1].trim() : s.split(";")[0].trim(),
-    fy2: fy2Match ? fy2Match[1].trim() : "—",
-  };
+// ── Format range "12.3x – 15.7x" ─────────────────────────────────────────────
+const fmtRange = (low: number | null, high: number | null, suffix = "x"): string => {
+  if (low === null && high === null) return "—";
+  if (low === null)  return `~${high?.toFixed(1)}${suffix}`;
+  if (high === null) return `~${low.toFixed(1)}${suffix}`;
+  return `${low.toFixed(1)}${suffix} – ${high.toFixed(1)}${suffix}`;
 };
 
-// ── Extract PE midpoint ───────────────────────────────────────────────────
-const extractPEMidpoint = (peRange: string): number | null => {
-  const nums = peRange.match(/(\d+(?:\.\d+)?)/g);
-  if (!nums) return null;
-  if (nums.length === 1) return parseFloat(nums[0]);
-  return (parseFloat(nums[0]) + parseFloat(nums[1])) / 2;
+const fmtNum = (n: number | null, suffix = "%"): string =>
+  n === null ? "—" : `${n.toFixed(1)}${suffix}`;
+
+// ── Table row component ───────────────────────────────────────────────────────
+const TR = ({
+  label, value, note, highlight = false,
+}: { label: string; value: string; note?: string; highlight?: boolean }) => (
+  <div className="grid gap-3 py-2 border-b border-border/50"
+    style={{ gridTemplateColumns: "clamp(110px,38%,140px) minmax(0,1fr) minmax(0,1.4fr)" }}>
+    <div className={`text-xs pt-0.5 ${highlight ? "font-semibold text-text-primary" : "text-text-secondary"}`}>
+      {label}
+    </div>
+    <div className={`text-xs font-bold ${highlight ? "text-signal-amber" : "text-text-primary"}`}>
+      {value}
+    </div>
+    {note && <div className="text-2xs text-text-muted leading-relaxed">{note}</div>}
+  </div>
+);
+
+// ── Secondary metric row — only renders if value non-null ─────────────────────
+const SecondaryRow = ({ label, value, note }: { label: string; value: number | null; note?: string }) => {
+  if (value === null) return null;
+  return (
+    <div className="grid gap-3 py-2 border-b border-border/50"
+      style={{ gridTemplateColumns: "clamp(110px,38%,140px) minmax(0,1fr) minmax(0,1.4fr)" }}>
+      <div className="text-xs text-text-secondary pt-0.5">{label}</div>
+      <div className="text-xs font-semibold text-text-primary">{value.toFixed(1)}x</div>
+      {note && <div className="text-2xs text-text-muted leading-relaxed">{note}</div>}
+    </div>
+  );
 };
 
-// ── Extract revenue midpoint in Cr from raw string ───────────────────────
-const extractRevenueMidpointCr = (raw: string): number | null => {
-  const clean = raw.replace(/[₹,\s]/g, "");
-  // Range: "1240-1395Cr" or "1240Cr-1395Cr"
-  const range = clean.match(/(\d+(?:\.\d+)?)(?:Cr)?[-–](\d+(?:\.\d+)?)(?:Cr)?/i);
-  if (range) return (parseFloat(range[1]) + parseFloat(range[2])) / 2;
-  // Mn range: "12400-13950Mn"
-  const mnRange = clean.match(/(\d+(?:\.\d+)?)(?:Mn)?[-–](\d+(?:\.\d+)?)Mn/i);
-  if (mnRange) return ((parseFloat(mnRange[1]) + parseFloat(mnRange[2])) / 2) / 10;
-  // Single value
-  const single = clean.match(/(\d+(?:\.\d+)?)Cr/i);
-  if (single) return parseFloat(single[1]);
-  return null;
+// ── Operating metric chip ─────────────────────────────────────────────────────
+const OpChip = ({ label, value, suffix = "%" }: { label: string; value: number | null; suffix?: string }) => {
+  if (value === null) return null;
+  return (
+    <div className="flex flex-col items-center gap-0.5 px-3 py-2 bg-muted/60 rounded-lg min-w-[72px]">
+      <span className="text-2xs text-text-muted">{label}</span>
+      <span className="text-xs font-bold text-text-primary">{value.toFixed(1)}{suffix}</span>
+    </div>
+  );
 };
 
-// ── Price/Sales ratio ─────────────────────────────────────────────────────
-const calcPS = (marketCap: number, revenueRange: string): string | null => {
-  const rev = extractRevenueMidpointCr(revenueRange);
-  if (!rev || rev === 0) return null;
-  return (marketCap / rev).toFixed(1) + "x";
-};
-
-// ── FY labels from quarter ────────────────────────────────────────────────
-const getFYLabels = (quarter: string) => {
-  const m = quarter.match(/FY(\d+)/);
-  if (!m) return { fy1: "FY+1", fy2: "FY+2" };
-  const cur = parseInt(m[1]);
-  return { fy1: `FY${cur + 1}`, fy2: `FY${cur + 2}` };
-};
-
-// ── Plain English insight — returns bullet array ──────────────────────────
-const buildInsight = (
-  peRange: string,
-  peg: number | null,
-  price: number,
-  growthAssumption: string,
-  marketCap: number | null,
-  fy1RevenueRange: string,
-  fy1Label: string,
-): string[] => {
-  const pe = extractPEMidpoint(peRange);
-  if (!pe) return [];
-  const growthMatch = growthAssumption.match(/(\d+)[\s–-]+(\d+)%/);
-  const growthMid = growthMatch
-    ? ((parseInt(growthMatch[1]) + parseInt(growthMatch[2])) / 2).toFixed(0)
-    : null;
-
-  // Pre-profit company (PE > 100x and no PEG) — use P/Sales framing
-  if (peg === null && pe > 100 && marketCap) {
-    const ps = calcPS(marketCap, fy1RevenueRange);
-    const bullets: string[] = [];
-    if (price > 0) bullets.push(`Current price: ₹${price.toLocaleString("en-IN")}`);
-    bullets.push(`PE ~${pe.toFixed(0)}x reflects near-zero earnings (pre-profit company)`);
-    if (ps) bullets.push(`Price/Sales: ~${ps} ${fy1Label} revenue — more useful metric at this stage`);
-    if (growthMid) bullets.push(`Revenue growing ~${growthMid}% annually`);
-    bullets.push(`Market is pricing in a successful path to profitability`);
-    return bullets;
-  }
-
-  // Profitable company
-  const bullets: string[] = [];
-  if (price > 0) bullets.push(`Current price: ₹${price.toLocaleString("en-IN")}`);
-  bullets.push(`Paying ~${pe.toFixed(0)}x next year's estimated earnings`);
-  if (growthMid) bullets.push(`Revenue growing ~${growthMid}% annually`);
-  if (peg !== null) {
-    if (peg < 1)    bullets.push(`PEG ${peg.toFixed(1)} — stock looks attractively valued for its growth`);
-    else if (peg < 1.5) bullets.push(`PEG ${peg.toFixed(1)} — fair valuation for the growth trajectory`);
-    else            bullets.push(`PEG ${peg.toFixed(1)} — stock may be pricing in high expectations`);
-  }
-  return bullets;
-};
-
+// ── Main component ────────────────────────────────────────────────────────────
 export default function ValuationSection({ valuationEstimate, marketCap, quarter, price }: Props) {
-  const [expanded, setExpanded] = useState(false);
+  const [showRisks, setShowRisks] = useState(false);
 
   if (!valuationEstimate || !marketCap) return null;
-  if (valuationEstimate.mode === "BASELINE" && valuationEstimate.confidence === "LOW") {
+
+  // Handle legacy v1 format that still has old fields
+  const ve = valuationEstimate as any; // eslint-disable-line
+
+  // Detect if this is the new schema (has archetype field)
+  const isNewSchema = "archetype" in valuationEstimate && "forwardEstimates" in valuationEstimate;
+
+  // ── Legacy v1 fallback — render old minimal view ─────────────────────────
+  if (!isNewSchema) {
+    const legacyPE     = ve.valuation?.peRange   || "—";
+    const legacyPEG    = ve.valuation?.peg        != null ? Number(ve.valuation.peg) : null;
+    const legacyRev1   = normaliseCr(ve.estimates?.fy1?.revenueRange || "—");
+    const legacyPAT1   = normaliseCr(ve.estimates?.fy1?.patRange     || "—");
+    const { fy1 } = getFYLabels(quarter);
     return (
-      <section className="card-base p-4">
-        <div className="flex items-center gap-2 mb-2">
+      <section className="card-base p-4 space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
           <h2 className="text-sm font-bold text-text-primary">Forward valuation</h2>
-          <span className="text-2xs font-medium px-2 py-0.5 rounded-full border bg-signal-red-bg text-signal-red border-signal-red/20">
-            Insufficient data
+          <span className="text-2xs font-medium px-2 py-0.5 rounded-full border bg-muted text-text-muted border-border">
+            Legacy P/E
+          </span>
+          <span className="text-2xs text-text-muted">
+            Reprocess this company to get the new archetype-based valuation.
           </span>
         </div>
-        <p className="text-xs text-text-secondary">
-          Management has not provided sufficient forward guidance to calculate reliable PE/PEG estimates.
-        </p>
+        <div className="grid grid-cols-3 gap-2 text-center">
+          {[
+            { l: `${fy1} Revenue`, v: legacyRev1 },
+            { l: `${fy1} PAT`,     v: legacyPAT1 },
+            { l: "Forward PE",     v: legacyPE   },
+          ].map(({ l, v }) => (
+            <div key={l} className="bg-muted/40 rounded-lg p-2">
+              <p className="text-2xs text-text-muted">{l}</p>
+              <p className="text-xs font-bold text-text-primary mt-0.5">{v}</p>
+            </div>
+          ))}
+        </div>
+        {legacyPEG !== null && (
+          <p className="text-2xs text-text-muted">PEG: {legacyPEG.toFixed(1)}</p>
+        )}
       </section>
     );
   }
 
-  const ve = valuationEstimate;
+  // ── New schema ────────────────────────────────────────────────────────────
   const { fy1, fy2 } = getFYLabels(quarter);
-  const rev1 = splitVal(ve.estimates.fy1.revenueRange);
-  const rev2 = splitVal(ve.estimates.fy2.revenueRange);
-  const pat1 = splitVal(ve.estimates.fy1.patRange);
-  const pe   = splitVal(ve.valuation.peRange);
-  const revAssm = splitAssumption(ve.assumptions.revenueGrowth);
-  const patAssm = splitAssumption(ve.assumptions.patMargin);
+  const fe = valuationEstimate.forwardEstimates;
+  const val = valuationEstimate.valuation;
+  const ops = valuationEstimate.operatingMetrics;
+  const sm  = val.secondaryMetrics;
 
-  // Coerce peg to number — API may return it as a string
-  const rawPeg = ve.valuation.peg;
-  const peg    = rawPeg === null || rawPeg === undefined ? null : Number(rawPeg);
+  // Is this a Financials archetype?
+  const isFinancial = valuationEstimate.archetype.includes("Financial");
+  // Is this an Asset-Heavy / Manufacturing company?
+  const isManufacturing = valuationEstimate.archetype.includes("Asset-Heavy") ||
+                          valuationEstimate.archetype.includes("Cyclical");
+  // Is this early-stage / pre-profit?
+  const isEarlyStage = valuationEstimate.archetype.includes("Early-Stage") ||
+                       valuationEstimate.archetype.includes("Special Situation");
 
-  const peMidpoint   = extractPEMidpoint(ve.valuation.peRange);
-  const isPreProfit  = peg === null && peMidpoint !== null && peMidpoint > 50;
-  const psRatio      = isPreProfit && marketCap ? calcPS(marketCap, ve.estimates.fy1.revenueRange) : null;
-  const verdict      = pegVerdict(peg, ve.valuation.peRange);
+  // Formatted primary range string
+  const primaryRangeStr = fmtRange(val.primaryRange.low, val.primaryRange.high);
 
-  const insight = buildInsight(
-    ve.valuation.peRange, peg, price,
-    ve.assumptions.revenueGrowth, marketCap,
-    ve.estimates.fy1.revenueRange, fy1,
-  );
+  // Operating metrics exist?
+  const hasOpsMetrics = ops.roe !== null || ops.roa !== null || ops.nim !== null || ops.growth !== null;
 
   return (
     <section className="card-base p-4 space-y-4">
@@ -218,162 +193,219 @@ export default function ValuationSection({ valuationEstimate, marketCap, quarter
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2 flex-wrap">
           <h2 className="text-sm font-bold text-text-primary">Forward valuation</h2>
-          <span className={`text-2xs font-medium px-2 py-0.5 rounded-full border ${modeColor(ve.mode)}`}>
-            {ve.mode === "GUIDED" ? "Management guided" : ve.mode === "DERIVED" ? "Analyst derived" : "Baseline estimate"}
+          <span className={`text-2xs font-medium px-2 py-0.5 rounded-full border ${archetypeColor(valuationEstimate.archetype)}`}>
+            {valuationEstimate.archetype}
           </span>
-          <span className={`text-2xs font-semibold px-2 py-0.5 rounded-full border ${verdict.cls}`}>
-            {verdict.label}
+          <span className={`text-2xs font-semibold px-2 py-0.5 rounded-full border ${verdictColor(valuationEstimate.verdict)}`}>
+            {valuationEstimate.verdict === "Cheap"     ? "🟢 Cheap"     :
+             valuationEstimate.verdict === "Expensive" ? "🔴 Expensive" : "🟡 Fair value"}
           </span>
-          <span className="text-2xs text-text-muted">{confLabel(ve.confidence)}</span>
+          <span className={`text-2xs font-medium px-2 py-0.5 rounded-full border ${modeColor(valuationEstimate.mode)}`}>
+            {valuationEstimate.mode === "GUIDED" ? "Management guided" :
+             valuationEstimate.mode === "MIXED"  ? "Partially guided"  : "Analyst derived"}
+          </span>
+          <span className="text-2xs text-text-muted">{confLabel(valuationEstimate.confidence)}</span>
         </div>
         <span className="text-2xs text-text-muted">Mcap ₹{marketCap.toLocaleString("en-IN")} Cr</span>
       </div>
 
-      {/* 3-column table */}
+      {/* Classification reason */}
+      {valuationEstimate.classificationReason && (
+        <p className="text-2xs text-text-muted italic leading-relaxed border-l-2 border-border pl-2">
+          {valuationEstimate.classificationReason}
+        </p>
+      )}
+
+      {/* ── 3-column table ── */}
       <div>
         {/* Header row */}
         <div className="grid gap-3 pb-2 border-b border-border"
-          style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
+          style={{ gridTemplateColumns: "clamp(110px,38%,140px) minmax(0,1fr) minmax(0,1.4fr)" }}>
           <div />
           <div className="text-2xs text-text-muted font-medium">Value</div>
           <div className="text-2xs text-text-muted font-medium">How we got here</div>
         </div>
 
-        {/* Revenue FY1 */}
-        <div className="grid gap-3 py-2 border-b border-border/50"
-          style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
-          <div className="text-xs text-text-secondary pt-0.5">{fy1} Revenue</div>
-          <div className="text-xs font-semibold text-text-primary">{rev1.value}</div>
-          <div className="text-2xs text-text-muted leading-relaxed">{rev1.note}</div>
-        </div>
-
-        {/* Revenue FY2 — only show if available */}
-        {rev2.value !== "—" && rev2.value !== "N/A" && (
-          <div className="grid gap-3 py-2 border-b border-border/50"
-            style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
-            <div className="text-xs text-text-secondary pt-0.5">{fy2} Revenue</div>
-            <div className="text-xs font-semibold text-text-primary">{rev2.value}</div>
-            <div className="text-2xs text-text-muted leading-relaxed">{rev2.note}</div>
-          </div>
+        {/* Revenue FY+1 */}
+        {fe.revenue.fy1 && (
+          <TR label={`${fy1} Revenue`} value={normaliseCr(fe.revenue.fy1)} note="Forward revenue estimate" />
         )}
 
-        {/* PAT FY1 */}
-        <div className="grid gap-3 py-2 border-b border-border/50"
-          style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
-          <div className="text-xs text-text-secondary pt-0.5">{fy1} PAT</div>
-          <div className="text-xs font-semibold text-text-primary">{pat1.value}</div>
-          <div className="text-2xs text-text-muted leading-relaxed">{pat1.note}</div>
-        </div>
-
-        {/* Forward PE */}
-        <div className="grid gap-3 py-2 border-b border-border/50"
-          style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
-          <div className="text-xs font-semibold text-text-primary pt-0.5">
-            {isPreProfit ? `${fy2} Forward PE` : "Forward PE"}
-          </div>
-          <div className="text-xs font-bold text-signal-amber">{pe.value}</div>
-          <div className="text-2xs text-text-muted leading-relaxed">
-            {isPreProfit ? `Based on ${fy2} PAT (${fy1} earnings near zero)` : pe.note}
-          </div>
-        </div>
-
-        {/* P/Sales — shown for pre-profit companies */}
-        {isPreProfit && psRatio && (
-          <div className="grid gap-3 py-2 border-b border-border/50"
-            style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
-            <div className="text-xs font-semibold text-text-primary pt-0.5">{fy1} Price/Sales</div>
-            <div className="text-xs font-bold text-signal-blue">{psRatio}</div>
-            <div className="text-2xs text-text-muted leading-relaxed">
-              Mcap ÷ {fy1} revenue midpoint — more reliable metric for pre-profit companies
-            </div>
-          </div>
+        {/* Revenue FY+2 */}
+        {fe.revenue.fy2 && (
+          <TR label={`${fy2} Revenue`} value={normaliseCr(fe.revenue.fy2)} note="FY+2 revenue estimate" />
         )}
 
-        {/* PEG */}
+        {/* PAT FY+1 — shown for all except early-stage where it may be null */}
+        {fe.pat.fy1 && (
+          <TR label={`${fy1} PAT`} value={normaliseCr(fe.pat.fy1)} note="Forward earnings estimate" />
+        )}
+
+        {/* AUM FY+1 — Financials (AMCs, wealth) */}
+        {fe.aum.fy1 && (
+          <TR label={`${fy1} AUM`} value={normaliseCr(fe.aum.fy1)} note="Assets under management estimate" />
+        )}
+        {fe.aum.fy2 && (
+          <TR label={`${fy2} AUM`} value={normaliseCr(fe.aum.fy2)} note="FY+2 AUM estimate" />
+        )}
+
+        {/* Book Value FY+1 — Financials */}
+        {fe.bookValue.fy1 && (
+          <TR label={`${fy1} Book Value`} value={normaliseCr(fe.bookValue.fy1)} note="Net worth per share × shares" />
+        )}
+
+        {/* Primary metric — the headline number */}
+        <TR
+          label={`${val.primaryMetric}`}
+          value={primaryRangeStr}
+          note={
+            val.primaryMetric === "P/B"       ? "Price to Book — primary metric for financial companies" :
+            val.primaryMetric === "EV/EBITDA" ? "Enterprise Value to EBITDA — standard for manufacturing" :
+            val.primaryMetric === "P/Sales"   ? "Market Cap ÷ revenue — used when earnings are near zero" :
+                                                "Market Cap ÷ estimated earnings"
+          }
+          highlight
+        />
+
+        {/* Secondary metrics — render only non-null */}
+        {isFinancial && (
+          <>
+            <SecondaryRow label="P/E (secondary)"       value={sm.pe}       note="Supplementary earnings multiple" />
+            <SecondaryRow label="P/B (cross-check)"     value={sm.pb}       note="Book value cross-check" />
+          </>
+        )}
+        {isManufacturing && (
+          <>
+            <SecondaryRow label="P/E (secondary)"       value={sm.pe}       note="Supplementary earnings multiple" />
+            <SecondaryRow label="EV/EBITDA (check)"     value={sm.evEbitda} note="Operating cash flow multiple" />
+          </>
+        )}
+        {!isFinancial && !isManufacturing && !isEarlyStage && (
+          <SecondaryRow label="EV/EBITDA"               value={sm.evEbitda} note="Cross-check with operating cash flow" />
+        )}
+
+        {/* PEG — last row */}
         <div className="grid gap-3 py-2"
-          style={{ gridTemplateColumns: "clamp(100px,35%,130px) minmax(0,1fr) minmax(0,1.4fr)" }}>
-          <div className="text-xs font-semibold text-text-primary">PEG</div>
-          {peg !== null ? (
+          style={{ gridTemplateColumns: "clamp(110px,38%,140px) minmax(0,1fr) minmax(0,1.4fr)" }}>
+          <div className="text-xs font-semibold text-text-primary pt-0.5">PEG</div>
+          {sm.peg !== null ? (
             <>
-              <div className={`text-xs font-bold ${peg < 1 ? "text-signal-green" : peg < 1.5 ? "text-signal-amber" : "text-signal-red"}`}>
-                {peg.toFixed(1)}
+              <div className={`text-xs font-bold ${
+                sm.peg < 1 ? "text-signal-green" : sm.peg < 1.5 ? "text-signal-amber" : "text-signal-red"
+              }`}>
+                {sm.peg.toFixed(1)}
               </div>
-              <div className="text-2xs text-text-muted">PE midpoint ÷ growth %</div>
+              <div className="text-2xs text-text-muted">
+                {sm.peg < 1    ? "Below 1 — attractively valued for growth" :
+                 sm.peg < 1.5  ? "Fair valuation relative to growth trajectory" :
+                                  "Above 1.5 — market pricing in high expectations"}
+              </div>
             </>
           ) : (
             <>
               <div className="text-xs text-text-muted">N/A</div>
               <div className="text-2xs text-text-muted">
-                {isPreProfit
-                  ? "Not meaningful — earnings near zero. Use Price/Sales instead."
-                  : "Insufficient data to calculate PEG."}
+                {isEarlyStage  ? "Not meaningful — pre-profit stage. Use P/Sales instead." :
+                 isFinancial   ? "PEG not applicable for financial companies." :
+                                 "Insufficient data to calculate PEG."}
               </div>
             </>
           )}
         </div>
       </div>
 
-      {/* Plain English insight — bullet list */}
-      {insight.length > 0 && (
+      {/* Operating metrics chips — ROE, ROA, NIM, Growth */}
+      {hasOpsMetrics && (
+        <div className="space-y-1.5">
+          <p className="text-2xs font-semibold text-text-primary">Operating metrics</p>
+          <div className="flex flex-wrap gap-2">
+            <OpChip label="ROE"    value={ops.roe}    />
+            <OpChip label="ROA"    value={ops.roa}    />
+            {ops.nim !== null && <OpChip label="NIM"    value={ops.nim}    />}
+            <OpChip label="Growth" value={ops.growth} />
+          </div>
+        </div>
+      )}
+
+      {/* Plain English insight */}
+      {price > 0 && (
         <div className="bg-muted/40 rounded-lg px-3 py-2.5 space-y-1">
-          {insight.map((bullet, i) => (
-            <div key={i} className="flex items-start gap-2">
+          {price > 0 && (
+            <div className="flex items-start gap-2">
               <span className="text-text-muted text-xs mt-0.5 flex-shrink-0">·</span>
-              <p className="text-xs text-text-primary leading-relaxed">{bullet}</p>
+              <p className="text-xs text-text-primary leading-relaxed">
+                Current price: ₹{price.toLocaleString("en-IN")}
+              </p>
+            </div>
+          )}
+          {val.primaryRange.low !== null && val.primaryRange.high !== null && (
+            <div className="flex items-start gap-2">
+              <span className="text-text-muted text-xs mt-0.5 flex-shrink-0">·</span>
+              <p className="text-xs text-text-primary leading-relaxed">
+                At current market cap, paying {primaryRangeStr} on {val.primaryMetric} basis
+                — {valuationEstimate.verdict === "Cheap" ? "below" :
+                   valuationEstimate.verdict === "Expensive" ? "above" : "at"} India sector fair value
+              </p>
+            </div>
+          )}
+          {ops.growth !== null && (
+            <div className="flex items-start gap-2">
+              <span className="text-text-muted text-xs mt-0.5 flex-shrink-0">·</span>
+              <p className="text-xs text-text-primary leading-relaxed">
+                Revenue growing ~{ops.growth.toFixed(0)}% annually (analyst estimate)
+              </p>
+            </div>
+          )}
+          {sm.peg !== null && (
+            <div className="flex items-start gap-2">
+              <span className="text-text-muted text-xs mt-0.5 flex-shrink-0">·</span>
+              <p className="text-xs text-text-primary leading-relaxed">
+                PEG {sm.peg.toFixed(1)} — {
+                  sm.peg < 1 ? "stock looks attractively valued for its growth rate" :
+                  sm.peg < 1.5 ? "fair valuation for the expected growth trajectory" :
+                                 "stock may be pricing in optimistic future expectations"
+                }
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Assumptions */}
+      {valuationEstimate.assumptions.length > 0 && (
+        <div className="bg-muted/40 rounded-lg px-3 py-2.5 space-y-1.5">
+          <p className="text-2xs font-semibold text-text-primary">Assumptions</p>
+          {valuationEstimate.assumptions.map((a, i) => (
+            <div key={i} className="flex items-start gap-1.5">
+              <span className="text-2xs text-text-muted mt-0.5">·</span>
+              <p className="text-2xs text-text-muted leading-relaxed">{a}</p>
             </div>
           ))}
         </div>
       )}
 
-      {/* Assumptions — split FY1/FY2 */}
-      <div className="bg-muted/40 rounded-lg px-3 py-2.5 space-y-2">
-        <p className="text-2xs font-semibold text-text-primary">Assumptions</p>
-        <div className="grid gap-2" style={{ gridTemplateColumns: "100px 1fr" }}>
-          <span className="text-2xs text-text-muted">Revenue growth</span>
-          <div className="space-y-0.5">
-            <p className="text-2xs text-text-primary">{fy1}: {revAssm.fy1}</p>
-            {revAssm.fy2 !== "—" && <p className="text-2xs text-text-secondary">{fy2}: {revAssm.fy2}</p>}
-          </div>
-        </div>
-        <div className="grid gap-2" style={{ gridTemplateColumns: "100px 1fr" }}>
-          <span className="text-2xs text-text-muted">PAT margin</span>
-          <div className="space-y-0.5">
-            <p className="text-2xs text-text-primary">{fy1}: {patAssm.fy1}</p>
-            {patAssm.fy2 !== "—" && <p className="text-2xs text-text-secondary">{fy2}: {patAssm.fy2}</p>}
-          </div>
-        </div>
-        {ve.assumptions.drivers && (
-          <div className="space-y-0.5 mt-1">
-            {(Array.isArray(ve.assumptions.drivers)
-              ? ve.assumptions.drivers
-              : ve.assumptions.drivers.split(/[;·]/).map((s: string) => s.trim()).filter(Boolean)
-            ).map((driver: string, i: number) => (
-              <div key={i} className="flex items-start gap-1.5">
-                <span className="text-2xs text-text-muted mt-0.5">·</span>
-                <p className="text-2xs text-text-muted leading-relaxed">{driver}</p>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Calculation steps toggle */}
-      <button onClick={() => setExpanded(!expanded)}
-        className="text-2xs text-signal-blue hover:underline">
-        {expanded ? "Hide calculation steps ↑" : "Show calculation steps ↓"}
-      </button>
-
-      {expanded && (
-        <div className="bg-muted/40 rounded-lg px-3 py-2.5 space-y-1.5">
-          {ve.calculationSteps.map((step, i) => (
-            <p key={i} className="text-2xs text-text-secondary leading-relaxed">
-              {i + 1}. {step}
-            </p>
-          ))}
-        </div>
+      {/* Risks toggle */}
+      {valuationEstimate.risks.length > 0 && (
+        <>
+          <button onClick={() => setShowRisks(!showRisks)}
+            className="text-2xs text-signal-blue hover:underline">
+            {showRisks ? "Hide estimate risks ↑" : "Show estimate risks ↓"}
+          </button>
+          {showRisks && (
+            <div className="bg-signal-red-bg/40 rounded-lg px-3 py-2.5 space-y-1.5">
+              <p className="text-2xs font-semibold text-signal-red">What could invalidate these estimates</p>
+              {valuationEstimate.risks.map((r, i) => (
+                <div key={i} className="flex items-start gap-1.5">
+                  <span className="text-2xs text-signal-red/70 mt-0.5">⚠</span>
+                  <p className="text-2xs text-text-secondary leading-relaxed">{r}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
-      {ve.mode !== "GUIDED" && (
+      {valuationEstimate.mode !== "GUIDED" && (
         <p className="text-2xs text-text-muted leading-relaxed">
           Estimates derived from management commentary and historical trends. Verify against actual financials before making investment decisions.
         </p>
