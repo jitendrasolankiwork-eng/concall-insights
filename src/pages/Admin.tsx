@@ -1206,7 +1206,7 @@ function CompaniesTab({ pin }: { pin: string }) {
 
                   {/* Last processed */}
                   <div>
-                    <span className="text-xs text-text-muted">{row.lastProcessedAt ? row.lastProcessedAt.slice(0, 10) : "—"}</span>
+                    <span className="text-xs text-text-muted">{row.lastProcessedAt ? new Date(row.lastProcessedAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—"}</span>
                   </div>
 
                   {/* Actions */}
