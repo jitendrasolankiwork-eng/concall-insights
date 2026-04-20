@@ -306,7 +306,7 @@ export default function ValuationSection({ valuationEstimate, marketCap, quarter
               <div className="text-xs text-text-muted">N/A</div>
               <div className="text-2xs text-text-muted">
                 {isEarlyStage  ? "Not meaningful — pre-profit stage. Use P/Sales instead." :
-                 isFinancial   ? "PEG not applicable for financial companies." :
+                 isFinancial   ? "Not applicable — refer to P/B and ROE for financial companies." :
                                  "Insufficient data to calculate PEG."}
               </div>
             </>
