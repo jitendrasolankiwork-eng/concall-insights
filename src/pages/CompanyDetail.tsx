@@ -546,7 +546,8 @@ export default function CompanyDetail() {
   useEffect(() => {
     if (!sym) return;
     fetchRecentAnnouncements(5, 10)
-      .then((data) => setCriticalAnns(data.filter((a) => a.symbol === sym.toUpperCase())));
+      .then((data) => setCriticalAnns(data.filter((a) => a.symbol === sym.toUpperCase())))
+      .catch(() => setCriticalAnns([]));  // critical-banner is best-effort; ignore load errors
   }, [sym]);
 
   // Live price state — polled independently every 60s

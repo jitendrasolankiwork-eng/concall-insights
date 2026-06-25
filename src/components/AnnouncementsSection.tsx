@@ -6,7 +6,7 @@
  * Clicking a card navigates to /company/:symbol?tab=announcements
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { fetchRecentAnnouncements, type RecentAnnouncement } from "@/lib/api";
 
@@ -195,13 +195,15 @@ interface Props {
 export function AnnouncementsSection({ symbols = [] }: Props) {
   const [announcements, setAnnouncements] = useState<RecentAnnouncement[]>([]);
   const [loading,       setLoading]       = useState(true);
+  const [error,         setError]         = useState(false);
   const [page,          setPage]          = useState(1);
   const [impact,        setImpact]        = useState<ImpactFilter>("all");
   const [sort,          setSort]          = useState<SortKey>("date");
   const [company,       setCompany]       = useState<string>("all");
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setLoading(true);
+    setError(false);
     fetchRecentAnnouncements(3, 100)
       .then((data) => {
         const filtered = symbols.length > 0
@@ -209,8 +211,11 @@ export function AnnouncementsSection({ symbols = [] }: Props) {
           : data;
         setAnnouncements(filtered);
       })
+      .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, []);
+  }, [symbols]);
+
+  useEffect(() => { load(); }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Unique company list for dropdown
   const companies = Array.from(new Set(announcements.map((a) => a.symbol))).sort();
@@ -239,7 +244,7 @@ export function AnnouncementsSection({ symbols = [] }: Props) {
 
   const resetPage = () => setPage(1);
 
-  if (!loading && announcements.length === 0) return null;
+  if (!loading && !error && announcements.length === 0) return null;
 
   return (
     <section className="space-y-3">
@@ -254,10 +259,10 @@ export function AnnouncementsSection({ symbols = [] }: Props) {
             {criticals} critical
           </span>
         )}
-        {!loading && (
+        {!loading && !error && (
           <span className="text-2xs text-text-muted">{announcements.length} tracked</span>
         )}
-        {!loading && <Legend />}
+        {!loading && !error && <Legend />}
       </div>
 
       <div className="h-px bg-border" />
@@ -317,8 +322,21 @@ export function AnnouncementsSection({ symbols = [] }: Props) {
         </div>
       )}
 
+      {/* Load error — keep the section visible with a retry instead of disappearing */}
+      {!loading && error && (
+        <div className="card-base p-5 text-center space-y-2">
+          <p className="text-xs text-text-muted">Couldn't load announcements.</p>
+          <button
+            onClick={load}
+            className="text-2xs px-3 py-1.5 rounded-full bg-muted text-text-secondary hover:bg-border transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Empty after filter */}
-      {!loading && sorted.length === 0 && (
+      {!loading && !error && sorted.length === 0 && (
         <div className="card-base p-5 text-center">
           <p className="text-xs text-text-muted">No announcements match your filters.</p>
         </div>
