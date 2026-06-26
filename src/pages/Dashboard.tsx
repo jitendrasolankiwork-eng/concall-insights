@@ -398,10 +398,10 @@ export default function Dashboard() {
           />
         )}
 
-        {/* Announcements feed — tracked companies only */}
-        {!loading && companies.length > 0 && (
-          <AnnouncementsSection symbols={companies.map((c) => c.ticker)} />
-        )}
+        {/* Announcements feed — loads independently of the (slow) per-company
+            valuation fetch so it never gets blocked behind the dashboard load.
+            symbols starts empty and narrows once companies resolve. */}
+        <AnnouncementsSection symbols={companies.map((c) => c.ticker)} />
 
         {/* Sort + Filter bar */}
         {!loading && companies.length > 0 && (

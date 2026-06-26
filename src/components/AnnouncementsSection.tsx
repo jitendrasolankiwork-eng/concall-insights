@@ -201,27 +201,31 @@ export function AnnouncementsSection({ symbols = [] }: Props) {
   const [sort,          setSort]          = useState<SortKey>("date");
   const [company,       setCompany]       = useState<string>("all");
 
+  // Fetch runs independently of the dashboard's (slow) per-company load so the feed
+  // appears in ~2s instead of waiting for every company's valuation to resolve.
   const load = useCallback(() => {
     setLoading(true);
     setError(false);
     fetchRecentAnnouncements(3, 100)
-      .then((data) => {
-        const filtered = symbols.length > 0
-          ? data.filter((a) => symbols.includes(a.symbol))
-          : data;
-        setAnnouncements(filtered);
-      })
+      .then((data) => setAnnouncements(data))
       .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, [symbols]);
+  }, []);
 
-  useEffect(() => { load(); }, []);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [load]);
+
+  // Scope to tracked symbols once the dashboard provides them. Before that (or when
+  // none are passed) show everything — the feed only ever contains tracked-company
+  // announcements anyway, so this just narrows, never broadens.
+  const scoped = symbols.length > 0
+    ? announcements.filter((a) => symbols.includes(a.symbol))
+    : announcements;
 
   // Unique company list for dropdown
-  const companies = Array.from(new Set(announcements.map((a) => a.symbol))).sort();
+  const companies = Array.from(new Set(scoped.map((a) => a.symbol))).sort();
 
   // Apply filters
-  const filtered = announcements.filter((a) => {
+  const filtered = scoped.filter((a) => {
     const imp = normaliseImpact(a.signal.impact);
     if (impact === "positive" && imp !== "🟢") return false;
     if (impact === "negative" && imp !== "🔴") return false;
@@ -240,11 +244,11 @@ export function AnnouncementsSection({ symbols = [] }: Props) {
 
   const totalPages = Math.ceil(sorted.length / PAGE_SIZE);
   const visible    = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const criticals  = announcements.filter((a) => a.signal.priority >= 5).length;
+  const criticals  = scoped.filter((a) => a.signal.priority >= 5).length;
 
   const resetPage = () => setPage(1);
 
-  if (!loading && !error && announcements.length === 0) return null;
+  if (!loading && !error && scoped.length === 0) return null;
 
   return (
     <section className="space-y-3">
@@ -260,7 +264,7 @@ export function AnnouncementsSection({ symbols = [] }: Props) {
           </span>
         )}
         {!loading && !error && (
-          <span className="text-2xs text-text-muted">{announcements.length} tracked</span>
+          <span className="text-2xs text-text-muted">{scoped.length} tracked</span>
         )}
         {!loading && !error && <Legend />}
       </div>
